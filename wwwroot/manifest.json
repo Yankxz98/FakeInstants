@@ -1,0 +1,21 @@
+{
+  "name": "FakeInstants - Aplicação de Áudio Offline",
+  "short_name": "FakeInstants",
+  "description": "Aplicação offline para reprodução de sons, inspirada no MyInstants",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1a",
+  "theme_color": "#007bff",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "pt-BR",
+  "categories": ["music", "entertainment", "productivity"],
+  "icons": [
+    {
+      "src": "favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    }
+  ]
+}
+

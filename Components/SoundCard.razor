@@ -1,0 +1,121 @@
+@inject AudioService AudioService
+
+<div class="sound-card @(IsPlaying ? "playing" : "") @(Sound.Favorite ? "favorite" : "")"
+     @onclick="OnPlayClick">
+
+    <div class="sound-header">
+        <div class="sound-name" title="@Sound.DisplayName">
+            @Sound.DisplayName
+        </div>
+        <button class="btn btn-sm btn-link favorite-btn"
+                @onclick:stopPropagation="true"
+                @onclick="OnFavoriteClick">
+            <i class="fas fa-star favorite-icon @(Sound.Favorite ? "fas" : "far")"></i>
+        </button>
+    </div>
+
+    @if (ShowDescriptions && !string.IsNullOrEmpty(Sound.Description))
+    {
+        <div class="sound-description">
+            @Sound.Description
+        </div>
+    }
+
+    <div class="sound-meta">
+        <div class="sound-info">
+            <small class="text-muted">
+                @Sound.DurationFormatted • @Sound.Format.ToUpper()
+            </small>
+        </div>
+        <div class="sound-actions">
+            @if (Sound.PlayCount > 0)
+            {
+                <small class="text-muted">
+                    <i class="fas fa-play me-1"></i>@Sound.PlayCount
+                </small>
+            }
+            <button class="btn btn-sm btn-outline-secondary ms-2"
+                    @onclick:stopPropagation="true"
+                    @onclick="OnEditClick">
+                <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-danger ms-1"
+                    @onclick:stopPropagation="true"
+                    @onclick="OnDeleteClick">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(CategoryName))
+    {
+        <div class="category-tag" style="background-color: @CategoryColor; color: white;">
+            <i class="@CategoryIcon me-1"></i>@CategoryName
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public Sound Sound { get; set; } = new();
+    [Parameter] public EventCallback OnPlay { get; set; }
+    [Parameter] public EventCallback OnFavoriteToggle { get; set; }
+    [Parameter] public EventCallback OnEdit { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+    [Parameter] public bool ShowDescriptions { get; set; } = true;
+
+    private bool IsPlaying { get; set; }
+    private string CategoryName { get; set; } = "";
+    private string CategoryColor { get; set; } = "#007bff";
+    private string CategoryIcon { get; set; } = "fas fa-music";
+
+    [Inject] private SoundManager SoundManager { get; set; } = default!;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadCategoryInfoAsync();
+    }
+
+    private async Task LoadCategoryInfoAsync()
+    {
+        if (SoundManager != null && !string.IsNullOrEmpty(Sound.Category))
+        {
+            var categories = await SoundManager.GetAllCategoriesAsync();
+            var category = categories.FirstOrDefault(c => c.Id == Sound.Category);
+            if (category != null)
+            {
+                CategoryName = category.Name;
+                CategoryColor = category.Color;
+                CategoryIcon = category.Icon;
+            }
+        }
+    }
+
+    private async Task OnPlayClick()
+    {
+        IsPlaying = !IsPlaying;
+        StateHasChanged();
+
+        await OnPlay.InvokeAsync();
+
+        // Reset playing state after a short delay
+        await Task.Delay(100);
+        IsPlaying = false;
+        StateHasChanged();
+    }
+
+    private async Task OnFavoriteClick()
+    {
+        await OnFavoriteToggle.InvokeAsync();
+    }
+
+    private async Task OnEditClick()
+    {
+        await OnEdit.InvokeAsync();
+    }
+
+    private async Task OnDeleteClick()
+    {
+        await OnDelete.InvokeAsync();
+    }
+}
+

@@ -1,0 +1,51 @@
+﻿@page "/Error"
+
+<PageTitle>Erro - FakeInstants</PageTitle>
+
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="text-center py-5">
+                <div class="error-icon mb-4">
+                    <i class="fas fa-exclamation-triangle fa-4x text-warning"></i>
+                </div>
+
+                <h1 class="text-danger mb-3">Ops! Algo deu errado</h1>
+                <h5 class="text-muted mb-4">Ocorreu um erro inesperado na aplicação</h5>
+
+                <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                    <button class="btn btn-primary" @onclick="ReloadPage">
+                        <i class="fas fa-redo me-2"></i>Tentar Novamente
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="GoHome">
+                        <i class="fas fa-home me-2"></i>Voltar ao Início
+                    </button>
+                </div>
+
+                <div class="mt-4 p-3 bg-light rounded">
+                    <h6>Dicas para solucionar:</h6>
+                    <ul class="text-start small">
+                        <li>Verifique sua conexão com a internet</li>
+                        <li>Limpe o cache do navegador</li>
+                        <li>Tente recarregar a página</li>
+                        <li>Se o problema persistir, reinicie a aplicação</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
+
+    private void ReloadPage()
+    {
+        NavigationManager.NavigateTo(NavigationManager.Uri, forceLoad: true);
+    }
+
+    private void GoHome()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+}

@@ -1,0 +1,342 @@
+@inject SoundManager SoundManager
+@inject AudioService AudioService
+@inject NavigationManager NavigationManager
+
+<PageTitle>FakeInstants - Adicionar Sons</PageTitle>
+
+<div class="upload-container">
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-lg-8">
+                <!-- Upload Area -->
+                <div class="upload-area"
+                     @ondragover="HandleDragOver"
+                     @ondragleave="HandleDragLeave"
+                     @ondrop="HandleDrop"
+                     @ondrop:preventDefault="true"
+                     @ondragover:preventDefault="true">
+
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+
+                    <h4>Arraste arquivos de áudio aqui</h4>
+                    <p class="text-muted">ou</p>
+
+                    <InputFile id="fileInput"
+                              OnChange="HandleFileSelection"
+                              multiple
+                              accept=".mp3,.wav,.ogg,.aac,.m4a,.flac" />
+
+                    <label for="fileInput" class="btn btn-primary">
+                        <i class="fas fa-folder-open me-2"></i>Selecionar Arquivos
+                    </label>
+
+                    <p class="mt-3 small text-muted">
+                        Formatos suportados: MP3, WAV, OGG, AAC, M4A, FLAC
+                    </p>
+                </div>
+
+                <!-- Upload Progress -->
+                @if (UploadQueue.Count > 0)
+                {
+                    <div class="upload-progress mt-4">
+                        <h5>Processando @UploadQueue.Count arquivo(s)...</h5>
+                        <div class="progress mb-3">
+                            <div class="progress-bar"
+                                 role="progressbar"
+                                 style="width: @(UploadProgress)%">
+                                @UploadProgress%
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="col-lg-4">
+                <!-- Upload Settings -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Configurações</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Categoria</label>
+                            <select class="form-select" @bind="SelectedCategoryId">
+                                <option value="">Selecione uma categoria</option>
+                                @foreach (var category in Categories)
+                                {
+                                    <option value="@category.Id">@category.Name</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Descrição (opcional)</label>
+                            <textarea class="form-control"
+                                     rows="3"
+                                     placeholder="Adicione uma descrição para os sons..."
+                                     @bind="DefaultDescription"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="autoOrganize"
+                                       @bind="AutoOrganize" />
+                                <label class="form-check-label" for="autoOrganize">
+                                    Organização automática por categoria
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Uploaded Files Preview -->
+        @if (UploadedSounds.Count > 0)
+        {
+            <div class="mt-4">
+                <h5>Sons adicionados (@UploadedSounds.Count)</h5>
+                <div class="row">
+                    @foreach (var sound in UploadedSounds)
+                    {
+                        <div class="col-md-6 col-lg-4 mb-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6 class="card-title">@sound.DisplayName</h6>
+                                    <p class="card-text small text-muted">
+                                        @sound.DurationFormatted • @sound.Format.ToUpper()
+                                    </p>
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            @onclick="() => RemoveUploadedSound(sound)">
+                                        <i class="fas fa-trash me-1"></i>Remover
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="mt-3">
+                    <button class="btn btn-success me-2" @onclick="SaveAllSounds">
+                        <i class="fas fa-save me-2"></i>Salvar Todos
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="ClearAll">
+                        <i class="fas fa-times me-2"></i>Limpar
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<Sound> UploadQueue { get; set; } = new();
+    private List<Sound> UploadedSounds { get; set; } = new();
+    private List<Category> Categories { get; set; } = new();
+    private string SelectedCategoryId { get; set; } = "";
+    private string DefaultDescription { get; set; } = "";
+    private bool AutoOrganize { get; set; } = true;
+    private int UploadProgress { get; set; } = 0;
+    private bool IsDragOver { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SoundManager.InitializeAsync();
+        Categories = await SoundManager.GetAllCategoriesAsync();
+    }
+
+    private void HandleDragOver(DragEventArgs e)
+    {
+        IsDragOver = true;
+    }
+
+    private void HandleDragLeave(DragEventArgs e)
+    {
+        IsDragOver = false;
+    }
+
+    private async Task HandleDrop(DragEventArgs e)
+    {
+        IsDragOver = false;
+        // Note: Drag and drop file handling would need additional implementation
+        // For now, we'll skip this and focus on file input
+    }
+
+    private async Task HandleFileSelection(InputFileChangeEventArgs e)
+    {
+        await ProcessFilesAsync(e.GetMultipleFiles());
+    }
+
+    private async Task ProcessFilesAsync(IEnumerable<IBrowserFile> files)
+    {
+        UploadProgress = 0;
+        UploadQueue.Clear();
+
+        var validFiles = files.Where(f => IsValidAudioFile(f)).ToList();
+
+        if (validFiles.Count == 0)
+        {
+            // Show error message
+            return;
+        }
+
+        foreach (var file in validFiles)
+        {
+            var sound = await CreateSoundFromFileAsync(file);
+            if (sound != null)
+            {
+                UploadQueue.Add(sound);
+            }
+        }
+
+        await ProcessUploadQueueAsync();
+    }
+
+    private async Task ProcessUploadQueueAsync()
+    {
+        UploadedSounds.Clear();
+
+        for (int i = 0; i < UploadQueue.Count; i++)
+        {
+            var sound = UploadQueue[i];
+
+            // Auto-organize if enabled and no category selected
+            if (AutoOrganize && string.IsNullOrEmpty(SelectedCategoryId))
+            {
+                sound.Category = await SuggestCategoryAsync(sound);
+            }
+            else if (!string.IsNullOrEmpty(SelectedCategoryId))
+            {
+                sound.Category = SelectedCategoryId;
+            }
+
+            if (!string.IsNullOrEmpty(DefaultDescription))
+            {
+                sound.Description = DefaultDescription;
+            }
+
+            UploadedSounds.Add(sound);
+
+            UploadProgress = (int)((i + 1) / (double)UploadQueue.Count * 100);
+            StateHasChanged();
+        }
+
+        UploadQueue.Clear();
+        UploadProgress = 100;
+    }
+
+    private async Task<Sound?> CreateSoundFromFileAsync(IBrowserFile file)
+    {
+        try
+        {
+            var fileName = file.Name;
+            var format = Path.GetExtension(fileName).TrimStart('.').ToLower();
+
+            if (!IsValidAudioFile(file))
+                return null;
+
+            // 1. Read file into a memory stream to get duration client-side
+            var memoryStream = new MemoryStream();
+            await file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024).CopyToAsync(memoryStream);
+            var audioData = memoryStream.ToArray();
+
+            // 2. Get duration from the byte array
+            var duration = await AudioService.GetAudioDurationAsync(audioData);
+
+            // 3. In WebAssembly, we'll store the audio data as base64 in the Sound object
+            // and create a blob URL for playback
+            var base64Data = Convert.ToBase64String(audioData);
+            var mimeType = GetMimeType(format);
+            var dataUrl = $"data:{mimeType};base64,{base64Data}";
+
+            var sound = new Sound
+            {
+                Name = Path.GetFileNameWithoutExtension(fileName),
+                FileName = fileName,
+                FilePath = dataUrl, // Use data URL for WebAssembly
+                Format = format,
+                FileSize = file.Size,
+                Duration = duration
+            };
+
+            return sound;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error processing file {file.Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private string GetMimeType(string format)
+    {
+        return format.ToLower() switch
+        {
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            "ogg" => "audio/ogg",
+            "aac" => "audio/aac",
+            "m4a" => "audio/mp4",
+            "flac" => "audio/flac",
+            _ => "audio/mpeg"
+        };
+    }
+
+    private async Task<string> SuggestCategoryAsync(Sound sound)
+    {
+        // Simple categorization based on file name or content
+        var name = sound.Name.ToLower();
+
+        if (name.Contains("meme") || name.Contains("funny") || name.Contains("lol"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Memes", StringComparison.OrdinalIgnoreCase))?.Id ?? Categories.First().Id;
+
+        if (name.Contains("music") || name.Contains("song"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Música", StringComparison.OrdinalIgnoreCase))?.Id ?? Categories.First().Id;
+
+        if (name.Contains("game") || name.Contains("gaming"))
+            return Categories.FirstOrDefault(c => c.Name.Contains("Games", StringComparison.OrdinalIgnoreCase))?.Id ?? Categories.First().Id;
+
+        return Categories.First().Id; // Default category
+    }
+
+    private bool IsValidAudioFile(IBrowserFile file)
+    {
+        var validExtensions = new[] { ".mp3", ".wav", ".ogg", ".aac", ".m4a", ".flac" };
+        var extension = Path.GetExtension(file.Name).ToLower();
+        return validExtensions.Contains(extension);
+    }
+
+    private void RemoveUploadedSound(Sound sound)
+    {
+        UploadedSounds.Remove(sound);
+        // In WebAssembly, no physical file to delete - data is stored in memory
+    }
+
+    private async Task SaveAllSounds()
+    {
+        if (UploadedSounds.Count == 0)
+            return;
+
+        foreach (var sound in UploadedSounds)
+        {
+            // In WebAssembly, the file is already stored as a data URL in FilePath
+            // No need to move physical files, just save the sound data
+            var savedSound = await SoundManager.AddProcessedSoundAsync(sound);
+        }
+
+        UploadedSounds.Clear();
+        NavigationManager.NavigateTo("/");
+    }
+
+    private void ClearAll()
+    {
+        // In WebAssembly, no physical files to delete - data is stored in memory
+        UploadedSounds.Clear();
+        UploadQueue.Clear();
+        UploadProgress = 0;
+    }
+}

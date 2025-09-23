@@ -1,0 +1,14 @@
+{
+  "audioSettings": {
+    "volume": 1.0,
+    "autoplay": false,
+    "repeat": false,
+    "shuffle": false
+  },
+  "uiSettings": {
+    "theme": "dark",
+    "gridSize": "medium",
+    "showDescriptions": true
+  }
+}
+

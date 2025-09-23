@@ -1,0 +1,46 @@
+{
+  "sounds": [],
+  "categories": [
+    {
+      "id": "memes",
+      "name": "Memes",
+      "description": "Sons de memes e virais",
+      "color": "#ff6b6b",
+      "icon": "fas fa-laugh",
+      "soundCount": 0
+    },
+    {
+      "id": "efeitos",
+      "name": "Efeitos",
+      "description": "Efeitos sonoros diversos",
+      "color": "#4ecdc4",
+      "icon": "fas fa-magic",
+      "soundCount": 0
+    },
+    {
+      "id": "musica",
+      "name": "Música",
+      "description": "Trechos musicais",
+      "color": "#45b7d1",
+      "icon": "fas fa-music",
+      "soundCount": 0
+    },
+    {
+      "id": "games",
+      "name": "Games",
+      "description": "Sons de jogos",
+      "color": "#96ceb4",
+      "icon": "fas fa-gamepad",
+      "soundCount": 0
+    },
+    {
+      "id": "outros",
+      "name": "Outros",
+      "description": "Outros tipos de sons",
+      "color": "#feca57",
+      "icon": "fas fa-folder",
+      "soundCount": 0
+    }
+  ]
+}
+
