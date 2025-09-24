@@ -50,7 +50,7 @@ public class SoundManager
         {
             Name = Path.GetFileNameWithoutExtension(fileName),
             Description = description,
-            Category = categoryId,
+            CategoryId = categoryId,
             FileName = fileName,
             FilePath = $"audio/categories/{category.Name}/{fileName}",
             Format = Path.GetExtension(fileName).TrimStart('.').ToLower()
@@ -72,10 +72,10 @@ public class SoundManager
     {
         if (_currentData == null) await InitializeAsync();
 
-        var category = _currentData!.Categories.FirstOrDefault(c => c.Id == sound.Category);
+        var category = _currentData!.Categories.FirstOrDefault(c => c.Id == sound.CategoryId);
         if (category == null)
         {
-            _logger.LogWarning("Category {0} not found", sound.Category);
+            _logger.LogWarning("Category {0} not found", sound.CategoryId);
             return null;
         }
 
@@ -118,15 +118,15 @@ public class SoundManager
         existingSound.Favorite = sound.Favorite;
 
         // If category changed, update counts
-        if (existingSound.Category != sound.Category)
+        if (existingSound.CategoryId != sound.CategoryId)
         {
-            var oldCategory = _currentData.Categories.FirstOrDefault(c => c.Id == existingSound.Category);
-            var newCategory = _currentData.Categories.FirstOrDefault(c => c.Id == sound.Category);
+            var oldCategory = _currentData.Categories.FirstOrDefault(c => c.Id == existingSound.CategoryId);
+            var newCategory = _currentData.Categories.FirstOrDefault(c => c.Id == sound.CategoryId);
 
             if (oldCategory != null) oldCategory.SoundCount--;
             if (newCategory != null) newCategory.SoundCount++;
 
-            existingSound.Category = sound.Category;
+            existingSound.CategoryId = sound.CategoryId;
         }
 
         await SaveDataAsync();
@@ -164,7 +164,7 @@ public class SoundManager
         }
 
         // Update category count
-        var category = _currentData.Categories.FirstOrDefault(c => c.Id == sound.Category);
+        var category = _currentData.Categories.FirstOrDefault(c => c.Id == sound.CategoryId);
         if (category != null)
         {
             category.SoundCount--;
@@ -260,7 +260,7 @@ public class SoundManager
     public async Task<List<Sound>> GetSoundsByCategoryAsync(string categoryId)
     {
         if (_currentData == null) await InitializeAsync();
-        return _currentData!.Sounds.Where(s => s.Category == categoryId).ToList();
+        return _currentData!.Sounds.Where(s => s.CategoryId == categoryId).ToList();
     }
 
     public async Task<List<Sound>> SearchSoundsAsync(string query)

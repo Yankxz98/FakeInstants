@@ -19,21 +19,16 @@
                            @onkeydown="OnSearchKeyDown" />
                 </div>
                 <div class="col-md-3">
-                    <select class="form-select" @bind="SelectedCategoryId">
-                        <option value="">Todas as categorias</option>
-                        @foreach (var category in Categories)
-                        {
-                            <option value="@category.Id">@category.Name</option>
-                        }
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <select class="form-select" @bind="SortBy">
+                    <select class="form-select"
+                            @bind="SortBy">
                         <option value="name">Nome</option>
                         <option value="recent">Mais recentes</option>
                         <option value="played">Mais tocados</option>
                         <option value="duration">Duração</option>
                     </select>
+                </div>
+                <div class="col-md-3">
+                    
                 </div>
             </div>
         </div>
@@ -53,7 +48,7 @@
             <i class="fas fa-music fa-3x text-muted mb-3"></i>
             <h4>Nenhum som encontrado</h4>
             <p class="text-muted">
-                @if (string.IsNullOrEmpty(SearchQuery) && string.IsNullOrEmpty(SelectedCategoryId))
+                @if (string.IsNullOrEmpty(SearchQuery) && string.IsNullOrEmpty(CategoryId))
                 {
                     <text>Adicione seus primeiros sons clicando em "Adicionar" acima.</text>
                 }
@@ -81,14 +76,27 @@
 
 @code {
     [Parameter] public bool ShowOnlyFavorites { get; set; }
+    [Parameter] public string? CategoryId { get; set; }
 
     private List<Sound> AllSounds { get; set; } = new();
-    private List<Category> Categories { get; set; } = new();
     private List<Sound> FilteredSounds { get; set; } = new();
     private bool IsLoading { get; set; } = true;
     private string SearchQuery { get; set; } = "";
-    private string SelectedCategoryId { get; set; } = "";
-    private string SortBy { get; set; } = "name";
+    
+    private string _sortBy = "name";
+    private string SortBy
+    {
+        get => _sortBy;
+        set
+        {
+            if (_sortBy != value)
+            {
+                _sortBy = value;
+                _ = InvokeAsync(ApplyFiltersAsync);
+            }
+        }
+    }
+
     private string GridSize { get; set; } = "medium";
 
     private System.Timers.Timer? _searchTimer;
@@ -111,6 +119,16 @@
     }
 
     [Parameter] public bool AutoLoad { get; set; } = false;
+    private string? _previousCategoryId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_previousCategoryId != CategoryId)
+        {
+            _previousCategoryId = CategoryId;
+            await LoadDataAsync();
+        }
+    }
 
     public async Task LoadDataManuallyAsync()
     {
@@ -137,8 +155,8 @@
             Logger.LogInformation($"SoundList.LoadDataAsync() - Loaded {AllSounds.Count} sounds");
 
             Logger.LogInformation("SoundList.LoadDataAsync() - Loading categories...");
-            Categories = await SoundManager.GetAllCategoriesAsync();
-            Logger.LogInformation($"SoundList.LoadDataAsync() - Loaded {Categories.Count} categories");
+            // Categories = await SoundManager.GetAllCategoriesAsync(); // No longer needed
+            Logger.LogInformation("SoundList.LoadDataAsync() - Categories loaded");
 
             Logger.LogInformation("SoundList.LoadDataAsync() - Applying filters...");
             await ApplyFiltersAsync();
@@ -184,9 +202,9 @@
         }
 
         // Apply category filter
-        if (!string.IsNullOrEmpty(SelectedCategoryId))
+        if (!string.IsNullOrEmpty(CategoryId))
         {
-            filtered = filtered.Where(s => s.Category == SelectedCategoryId);
+            filtered = filtered.Where(s => s.CategoryId == CategoryId);
         }
 
         // Apply sorting
@@ -255,11 +273,6 @@
     }
 
     private async Task OnCategoryChanged()
-    {
-        await ApplyFiltersAsync();
-    }
-
-    private async Task OnSortChanged()
     {
         await ApplyFiltersAsync();
     }

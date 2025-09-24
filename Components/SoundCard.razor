@@ -77,10 +77,10 @@
 
     private async Task LoadCategoryInfoAsync()
     {
-        if (SoundManager != null && !string.IsNullOrEmpty(Sound.Category))
+        if (SoundManager != null && !string.IsNullOrEmpty(Sound.CategoryId))
         {
             var categories = await SoundManager.GetAllCategoriesAsync();
-            var category = categories.FirstOrDefault(c => c.Id == Sound.Category);
+            var category = categories.FirstOrDefault(c => c.Id == Sound.CategoryId);
             if (category != null)
             {
                 CategoryName = category.Name;

@@ -207,11 +207,11 @@
             // Auto-organize if enabled and no category selected
             if (AutoOrganize && string.IsNullOrEmpty(SelectedCategoryId))
             {
-                sound.Category = await SuggestCategoryAsync(sound);
+                sound.CategoryId = await SuggestCategoryAsync(sound);
             }
             else if (!string.IsNullOrEmpty(SelectedCategoryId))
             {
-                sound.Category = SelectedCategoryId;
+                sound.CategoryId = SelectedCategoryId;
             }
 
             if (!string.IsNullOrEmpty(DefaultDescription))
