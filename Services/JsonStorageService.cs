@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.Json;
 using fakeinstants.Models;
 using Microsoft.JSInterop;
@@ -45,10 +46,12 @@ public class JsonStorageService
             _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Checking localStorage...");
             var storedData = await _jsRuntime.InvokeAsync<string>("localStorage.getItem", "fakeinstants-sound-data");
             SoundData? localStorageData = null;
-            
+
             if (!string.IsNullOrEmpty(storedData))
             {
-                localStorageData = JsonSerializer.Deserialize<SoundData>(storedData, new JsonSerializerOptions
+                // Decompress data from localStorage
+                var decompressedData = await DecodeAndDecompressAsync(storedData);
+                localStorageData = JsonSerializer.Deserialize<SoundData>(decompressedData, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
                 });
@@ -103,7 +106,9 @@ public class JsonStorageService
             });
 
             // Save to both localStorage and physical file for consistency
-            await _jsRuntime.InvokeVoidAsync("localStorage.setItem", "fakeinstants-sound-data", json);
+            // Compress data for localStorage to save space
+            var compressedJson = await CompressAndEncodeAsync(json);
+            await _jsRuntime.InvokeVoidAsync("localStorage.setItem", "fakeinstants-sound-data", compressedJson);
             
             // Also save to physical file
             var physicalFilePath = Path.Combine("wwwroot", SOUND_DATA_FILE);
@@ -177,5 +182,57 @@ public class JsonStorageService
         {
             Categories = SoundData.DefaultCategories
         };
+    }
+
+    // Compression helpers for localStorage
+    private async Task<string> CompressAndEncodeAsync(string data)
+    {
+        try
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(data);
+            using var outputStream = new MemoryStream();
+            using (var gzipStream = new GZipStream(outputStream, CompressionMode.Compress))
+            {
+                await gzipStream.WriteAsync(bytes, 0, bytes.Length);
+            }
+            var compressedBytes = outputStream.ToArray();
+            return Convert.ToBase64String(compressedBytes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to compress data, using uncompressed data");
+            return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(data));
+        }
+    }
+
+    private async Task<string> DecodeAndDecompressAsync(string compressedData)
+    {
+        try
+        {
+            var compressedBytes = Convert.FromBase64String(compressedData);
+            using var inputStream = new MemoryStream(compressedBytes);
+            using var outputStream = new MemoryStream();
+            using (var gzipStream = new GZipStream(inputStream, CompressionMode.Decompress))
+            {
+                await gzipStream.CopyToAsync(outputStream);
+            }
+            var decompressedBytes = outputStream.ToArray();
+            return System.Text.Encoding.UTF8.GetString(decompressedBytes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to decompress data, trying as uncompressed base64");
+            try
+            {
+                // Fallback: try to decode as regular base64 (uncompressed data)
+                var bytes = Convert.FromBase64String(compressedData);
+                return System.Text.Encoding.UTF8.GetString(bytes);
+            }
+            catch
+            {
+                _logger.LogError(ex, "Failed to decode data as both compressed and uncompressed");
+                throw;
+            }
+        }
     }
 }

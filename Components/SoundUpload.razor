@@ -1,6 +1,9 @@
 @inject SoundManager SoundManager
 @inject AudioService AudioService
 @inject NavigationManager NavigationManager
+@inject HttpClient Http
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
 
 <PageTitle>FakeInstants - Adicionar Sons</PageTitle>
 
@@ -38,7 +41,7 @@
                 </div>
 
                 <!-- Upload Progress -->
-                @if (UploadQueue.Count > 0)
+				@if (UploadQueue.Count > 0)
                 {
                     <div class="upload-progress mt-4">
                         <h5>Processando @UploadQueue.Count arquivo(s)...</h5>
@@ -51,6 +54,29 @@
                         </div>
                     </div>
                 }
+
+				@if (UploadQueue.Count > 0)
+				{
+					<div class="mt-4">
+						<h5>Arquivos selecionados (@UploadQueue.Count)</h5>
+						<div class="row">
+							@foreach (var item in UploadQueue)
+							{
+								<div class="col-md-6 col-lg-4 mb-3">
+									<div class="card">
+										<div class="card-body">
+											<h6 class="card-title">@item.FileName</h6>
+											<p class="card-text small text-muted">@item.Format.ToUpper() • @item.Size</p>
+											<button class="btn btn-sm btn-primary" @onclick="() => AddToStaged(item)">
+												<i class="fas fa-plus me-1"></i>Adicionar à lista
+											</button>
+										</div>
+									</div>
+								</div>
+							}
+						</div>
+					</div>
+				}
             </div>
 
             <div class="col-lg-4">
@@ -95,23 +121,21 @@
             </div>
         </div>
 
-        <!-- Uploaded Files Preview -->
-        @if (UploadedSounds.Count > 0)
+    <!-- Staged Files Preview -->
+    @if (StagedUploads.Count > 0)
         {
-            <div class="mt-4">
-                <h5>Sons adicionados (@UploadedSounds.Count)</h5>
+			<div class="mt-4">
+            <h5>Sons na lista (@StagedUploads.Count)</h5>
                 <div class="row">
-                    @foreach (var sound in UploadedSounds)
+                @foreach (var item in StagedUploads)
                     {
                         <div class="col-md-6 col-lg-4 mb-3">
                             <div class="card">
                                 <div class="card-body">
-                                    <h6 class="card-title">@sound.DisplayName</h6>
-                                    <p class="card-text small text-muted">
-                                        @sound.DurationFormatted • @sound.Format.ToUpper()
-                                    </p>
+                                <h6 class="card-title">@item.FileName</h6>
+                                <p class="card-text small text-muted">@item.Format.ToUpper() • @FormatFileSize(item.Size)</p>
                                     <button class="btn btn-sm btn-outline-danger"
-                                            @onclick="() => RemoveUploadedSound(sound)">
+                                        @onclick="() => RemoveStagedUpload(item)">
                                         <i class="fas fa-trash me-1"></i>Remover
                                     </button>
                                 </div>
@@ -121,7 +145,7 @@
                 </div>
 
                 <div class="mt-3">
-                    <button class="btn btn-success me-2" @onclick="SaveAllSounds">
+                <button class="btn btn-success me-2" @onclick="SaveAllSounds" disabled="@(!StagedUploads.Any())">
                         <i class="fas fa-save me-2"></i>Salvar Todos
                     </button>
                     <button class="btn btn-outline-secondary" @onclick="ClearAll">
@@ -134,8 +158,16 @@
 </div>
 
 @code {
-    private List<Sound> UploadQueue { get; set; } = new();
-    private List<Sound> UploadedSounds { get; set; } = new();
+    private sealed class PendingUpload
+    {
+        public IBrowserFile File { get; init; } = default!;
+        public string FileName { get; init; } = string.Empty;
+        public long Size { get; init; }
+        public string Format { get; init; } = string.Empty;
+    }
+
+    private List<PendingUpload> UploadQueue { get; set; } = new();
+    private List<PendingUpload> StagedUploads { get; set; } = new();
     private List<Category> Categories { get; set; } = new();
     private string SelectedCategoryId { get; set; } = "";
     private string DefaultDescription { get; set; } = "";
@@ -186,50 +218,18 @@
 
         foreach (var file in validFiles)
         {
-            var sound = await CreateSoundFromFileAsync(file);
-            if (sound != null)
+            var format = Path.GetExtension(file.Name).TrimStart('.').ToLower();
+            UploadQueue.Add(new PendingUpload
             {
-                UploadQueue.Add(sound);
-            }
+                File = file,
+                FileName = file.Name,
+                Size = file.Size,
+                Format = format
+            });
         }
-
-        await ProcessUploadQueueAsync();
     }
 
-    private async Task ProcessUploadQueueAsync()
-    {
-        UploadedSounds.Clear();
-
-        for (int i = 0; i < UploadQueue.Count; i++)
-        {
-            var sound = UploadQueue[i];
-
-            // Auto-organize if enabled and no category selected
-            if (AutoOrganize && string.IsNullOrEmpty(SelectedCategoryId))
-            {
-                sound.Category = await SuggestCategoryAsync(sound);
-            }
-            else if (!string.IsNullOrEmpty(SelectedCategoryId))
-            {
-                sound.Category = SelectedCategoryId;
-            }
-
-            if (!string.IsNullOrEmpty(DefaultDescription))
-            {
-                sound.Description = DefaultDescription;
-            }
-
-            UploadedSounds.Add(sound);
-
-            UploadProgress = (int)((i + 1) / (double)UploadQueue.Count * 100);
-            StateHasChanged();
-        }
-
-        UploadQueue.Clear();
-        UploadProgress = 100;
-    }
-
-    private async Task<Sound?> CreateSoundFromFileAsync(IBrowserFile file)
+    private async Task<Sound?> UploadFileAsync(IBrowserFile file, string? categoryId)
     {
         try
         {
@@ -239,29 +239,33 @@
             if (!IsValidAudioFile(file))
                 return null;
 
-            // 1. Read file into a memory stream to get duration client-side
-            var memoryStream = new MemoryStream();
-            await file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024).CopyToAsync(memoryStream);
-            var audioData = memoryStream.ToArray();
+            var categoryToUse = categoryId;
 
-            // 2. Get duration from the byte array
-            var duration = await AudioService.GetAudioDurationAsync(audioData);
-
-            // 3. In WebAssembly, we'll store the audio data as base64 in the Sound object
-            // and create a blob URL for playback
-            var base64Data = Convert.ToBase64String(audioData);
+            // Upload multipart to the backend and receive Sound metadata
+            using var content = new MultipartFormDataContent();
+            var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            var fileContent = new StreamContent(stream);
             var mimeType = GetMimeType(format);
-            var dataUrl = $"data:{mimeType};base64,{base64Data}";
-
-            var sound = new Sound
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
+            content.Add(fileContent, "file", file.Name);
+            if (!string.IsNullOrEmpty(categoryToUse))
             {
-                Name = Path.GetFileNameWithoutExtension(fileName),
-                FileName = fileName,
-                FilePath = dataUrl, // Use data URL for WebAssembly
-                Format = format,
-                FileSize = file.Size,
-                Duration = duration
-            };
+                content.Add(new StringContent(categoryToUse), "categoryId");
+            }
+
+            var response = await Http.PostAsync("/upload", content);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var sound = await response.Content.ReadFromJsonAsync<Sound>();
+            if (sound == null)
+                return null;
+
+            // Apply optional description from UI
+            if (!string.IsNullOrEmpty(DefaultDescription))
+            {
+                sound.Description = DefaultDescription;
+            }
 
             return sound;
         }
@@ -310,33 +314,66 @@
         return validExtensions.Contains(extension);
     }
 
-    private void RemoveUploadedSound(Sound sound)
+    private void AddToStaged(PendingUpload item)
     {
-        UploadedSounds.Remove(sound);
-        // In WebAssembly, no physical file to delete - data is stored in memory
+        if (!StagedUploads.Contains(item))
+        {
+            StagedUploads.Add(item);
+        }
+    }
+
+    private void RemoveStagedUpload(PendingUpload item)
+    {
+        StagedUploads.Remove(item);
     }
 
     private async Task SaveAllSounds()
     {
-        if (UploadedSounds.Count == 0)
+        if (StagedUploads.Count == 0)
             return;
 
-        foreach (var sound in UploadedSounds)
+        foreach (var item in StagedUploads)
         {
-            // In WebAssembly, the file is already stored as a data URL in FilePath
-            // No need to move physical files, just save the sound data
-            var savedSound = await SoundManager.AddProcessedSoundAsync(sound);
+            string? categoryToUse = null;
+            if (!string.IsNullOrEmpty(SelectedCategoryId))
+            {
+                categoryToUse = SelectedCategoryId;
+            }
+            else if (AutoOrganize)
+            {
+                var tempSound = new Sound { Name = Path.GetFileNameWithoutExtension(item.FileName) };
+                categoryToUse = await SuggestCategoryAsync(tempSound);
+            }
+
+            var uploaded = await UploadFileAsync(item.File, categoryToUse);
+            if (uploaded != null)
+            {
+                await SoundManager.AddProcessedSoundAsync(uploaded);
+            }
         }
 
-        UploadedSounds.Clear();
+        StagedUploads.Clear();
         NavigationManager.NavigateTo("/");
     }
 
     private void ClearAll()
     {
-        // In WebAssembly, no physical files to delete - data is stored in memory
-        UploadedSounds.Clear();
+        // Clear staged and selected lists
+        StagedUploads.Clear();
         UploadQueue.Clear();
         UploadProgress = 0;
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        int order = 0;
+        double size = bytes;
+        while (size >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            size /= 1024;
+        }
+        return $"{size:0.##} {sizes[order]}";
     }
 }

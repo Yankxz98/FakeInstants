@@ -4,6 +4,11 @@ console.log('Initializing audio service...');
 window.audioService = {
     audioElements: new Map(),
     masterVolume: 1.0,
+    dotNetReference: null,
+
+    setDotNetReference: function(dotNetRef) {
+        this.dotNetReference = dotNetRef;
+    },
 
     initializeAudio: function(soundId, filePath, volume = 1.0) {
         try {
@@ -18,12 +23,26 @@ window.audioService = {
 
             // Handle events
             audio.addEventListener('ended', () => {
+                console.log('[AudioService] Audio ended naturally:', soundId);
                 this.audioElements.delete(soundId);
+                // Notify Blazor that audio has ended
+                if (this.dotNetReference) {
+                    console.log('[AudioService] Notifying Blazor of audio end:', soundId);
+                    this.dotNetReference.invokeMethodAsync('NotifyAudioEnded', soundId)
+                        .then(() => console.log('[AudioService] Blazor notified successfully'))
+                        .catch(err => console.error('Error notifying audio end:', err));
+                }
             });
 
             audio.addEventListener('error', (e) => {
-                console.error('Audio error:', e);
+                console.error('[AudioService] Audio error:', soundId, e);
                 this.audioElements.delete(soundId);
+                // Also notify on error
+                if (this.dotNetReference) {
+                    console.log('[AudioService] Notifying Blazor of audio error:', soundId);
+                    this.dotNetReference.invokeMethodAsync('NotifyAudioEnded', soundId)
+                        .catch(err => console.error('Error notifying audio error:', err));
+                }
             });
 
             this.audioElements.set(soundId, audio);
@@ -66,10 +85,20 @@ window.audioService = {
         try {
             const audio = this.audioElements.get(soundId);
             if (audio) {
+                console.log('[AudioService] Stopping audio manually:', soundId);
                 audio.pause();
                 audio.currentTime = 0;
                 audio.remove();
                 this.audioElements.delete(soundId);
+                
+                // Notify Blazor that audio has stopped
+                if (this.dotNetReference) {
+                    console.log('[AudioService] Notifying Blazor of manual stop:', soundId);
+                    this.dotNetReference.invokeMethodAsync('NotifyAudioEnded', soundId)
+                        .then(() => console.log('[AudioService] Blazor notified of stop successfully'))
+                        .catch(err => console.error('Error notifying audio stop:', err));
+                }
+                
                 return true;
             }
             return false;

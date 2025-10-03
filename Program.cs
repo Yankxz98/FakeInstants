@@ -17,4 +17,10 @@ builder.Services.AddScoped<AudioService>();
 builder.Services.AddScoped<SoundManager>();
 builder.Services.AddSingleton<JsonStorageService>();
 
-await builder.Build().RunAsync(); 
+var host = builder.Build();
+
+// Initialize AudioService
+var audioService = host.Services.GetRequiredService<AudioService>();
+await audioService.InitializeAsync();
+
+await host.RunAsync(); 

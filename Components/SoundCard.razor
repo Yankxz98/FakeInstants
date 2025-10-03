@@ -1,7 +1,22 @@
 @inject AudioService AudioService
+@implements IDisposable
 
 <div class="sound-card @(IsPlaying ? "playing" : "") @(Sound.Favorite ? "favorite" : "")"
      @onclick="OnPlayClick">
+
+    @if (IsPlaying)
+    {
+        <div class="playing-indicator">
+            <i class="fas fa-volume-up"></i>
+            <span>Tocando</span>
+        </div>
+        <div class="stop-overlay">
+            <div class="stop-icon">
+                <i class="fas fa-stop-circle"></i>
+                <span>Clique para parar</span>
+            </div>
+        </div>
+    }
 
     <div class="sound-header">
         <div class="sound-name" title="@Sound.DisplayName">
@@ -75,12 +90,46 @@
         await LoadCategoryInfoAsync();
     }
 
+    protected override void OnInitialized()
+    {
+        AudioService.AudioStarted += OnAudioStarted;
+        AudioService.AudioEnded += OnAudioEnded;
+    }
+
+    public void Dispose()
+    {
+        AudioService.AudioStarted -= OnAudioStarted;
+        AudioService.AudioEnded -= OnAudioEnded;
+    }
+
+    private void OnAudioStarted(object? sender, string soundId)
+    {
+        var wasPlaying = IsPlaying;
+        IsPlaying = soundId == Sound.Id;
+        
+        if (IsPlaying != wasPlaying)
+        {
+            Console.WriteLine($"[SoundCard] Audio started - Sound: {Sound.DisplayName} ({Sound.Id}), IsPlaying: {IsPlaying}");
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnAudioEnded(object? sender, string soundId)
+    {
+        if (soundId == Sound.Id)
+        {
+            Console.WriteLine($"[SoundCard] Audio ended - Sound: {Sound.DisplayName} ({Sound.Id}), Setting IsPlaying to false");
+            IsPlaying = false;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
     private async Task LoadCategoryInfoAsync()
     {
-        if (SoundManager != null && !string.IsNullOrEmpty(Sound.Category))
+        if (SoundManager != null && !string.IsNullOrEmpty(Sound.CategoryId))
         {
             var categories = await SoundManager.GetAllCategoriesAsync();
-            var category = categories.FirstOrDefault(c => c.Id == Sound.Category);
+            var category = categories.FirstOrDefault(c => c.Id == Sound.CategoryId);
             if (category != null)
             {
                 CategoryName = category.Name;
@@ -92,15 +141,18 @@
 
     private async Task OnPlayClick()
     {
-        IsPlaying = !IsPlaying;
-        StateHasChanged();
-
-        await OnPlay.InvokeAsync();
-
-        // Reset playing state after a short delay
-        await Task.Delay(100);
-        IsPlaying = false;
-        StateHasChanged();
+        // Se já está tocando, para o áudio (toggle behavior)
+        if (IsPlaying)
+        {
+            Console.WriteLine($"[SoundCard] Stopping currently playing audio: {Sound.DisplayName} ({Sound.Id})");
+            await AudioService.StopSoundAsync(Sound.Id);
+        }
+        else
+        {
+            // Se não está tocando, toca o áudio
+            Console.WriteLine($"[SoundCard] Playing audio: {Sound.DisplayName} ({Sound.Id})");
+            await OnPlay.InvokeAsync();
+        }
     }
 
     private async Task OnFavoriteClick()

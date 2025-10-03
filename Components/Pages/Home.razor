@@ -1,5 +1,52 @@
 ﻿@page "/"
+@using fakeinstants.Models
+@using fakeinstants.Services
+@inject SoundManager SoundManager
+@inject ILogger<Home> Logger
 
 <PageTitle>FakeInstants - Home</PageTitle>
 
-<SoundList AutoLoad="true" />
+<div class="container-fluid">
+    <ul class="nav nav-tabs">
+        <li class="nav-item">
+            <a class="nav-link @(selectedCategoryId == null ? "active" : "")" href="#" @onclick='() => SelectCategory(null)' @onclick:preventDefault="true">Geral</a>
+        </li>
+        @if (categories != null)
+        {
+            @foreach (var category in categories)
+            {
+                <li class="nav-item">
+                    <a class="nav-link @(selectedCategoryId == category.Id ? "active" : "")" href="#" @onclick='() => SelectCategory(category.Id)' @onclick:preventDefault="true">@category.Name</a>
+                </li>
+            }
+        }
+    </ul> 
+
+    <div class="tab-content mt-3">
+        <SoundList CategoryId="@selectedCategoryId" @ref="soundListComponent" AutoLoad="true" />
+    </div>
+</div>
+
+@code {
+    private List<Category>? categories;
+    private string? selectedCategoryId = null;
+    private SoundList? soundListComponent;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            categories = await SoundManager.GetAllCategoriesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading categories for tabs");
+        }
+    }
+
+    private void SelectCategory(string? categoryId)
+    {
+        selectedCategoryId = categoryId;
+        StateHasChanged();
+    }
+}
