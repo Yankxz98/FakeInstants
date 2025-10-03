@@ -17,4 +17,11 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.0" PrivateAssets="all" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="Server/**/*.cs" />
+    <None Remove="Server/**" />
+    <Content Remove="Server/**" />
+    <EmbeddedResource Remove="Server/**" />
+  </ItemGroup>
+
 </Project>
