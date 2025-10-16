@@ -17,6 +17,8 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.Services.AddScoped<AudioService>();
 builder.Services.AddScoped<SoundManager>();
 builder.Services.AddSingleton<JsonStorageService>();
+builder.Services.AddScoped<FolderBasedCategoryService>();
+builder.Services.AddScoped<FileMoveService>();
 
 var host = builder.Build();
 

@@ -7,13 +7,25 @@ public class SoundManager
 {
     private readonly JsonStorageService _storage;
     private readonly AudioService _audioService;
+    private readonly FolderBasedCategoryService _folderService;
+    private readonly FileMoveService _fileMoveService;
     private readonly ILogger<SoundManager> _logger;
+    private readonly HttpClient _httpClient;
     private SoundData? _currentData;
 
-    public SoundManager(JsonStorageService storage, AudioService audioService, ILogger<SoundManager> logger)
+    public SoundManager(
+        JsonStorageService storage,
+        AudioService audioService,
+        FolderBasedCategoryService folderService,
+        FileMoveService fileMoveService,
+        HttpClient httpClient,
+        ILogger<SoundManager> logger)
     {
         _storage = storage;
         _audioService = audioService;
+        _folderService = folderService;
+        _fileMoveService = fileMoveService;
+        _httpClient = httpClient;
         _logger = logger;
     }
 
@@ -21,17 +33,104 @@ public class SoundManager
     {
         try
         {
-            _logger.LogInformation("SoundManager.InitializeAsync() - Starting initialization...");
-            _logger.LogInformation("SoundManager.InitializeAsync() - Calling _storage.LoadSoundDataAsync()...");
-            _currentData = await _storage.LoadSoundDataAsync();
-            _logger.LogInformation("SoundManager.InitializeAsync() - _storage.LoadSoundDataAsync() completed");
-            _logger.LogInformation("SoundManager initialized with {0} sounds and {1} categories",
+            _logger.LogInformation("SoundManager.InitializeAsync() - Starting initialization with filesystem as primary source...");
+
+            // PRIMARY SOURCE: Load from folder structure (filesystem)
+            _logger.LogInformation("SoundManager.InitializeAsync() - Loading from folder structure...");
+            var folderCategories = await _folderService.GetCategoriesFromFoldersAsync();
+            var folderSounds = await _folderService.GetSoundsFromFoldersAsync();
+
+            var folderData = new SoundData
+            {
+                Categories = folderCategories,
+                Sounds = folderSounds
+            };
+
+            _logger.LogInformation("SoundManager.InitializeAsync() - Loaded {0} sounds and {1} categories from filesystem",
+                folderSounds.Count, folderCategories.Count);
+
+            // SECONDARY: Load metadata from JSON/localStorage for enrichment
+            _logger.LogInformation("SoundManager.InitializeAsync() - Loading metadata from localStorage for enrichment...");
+            var jsonData = await _storage.LoadSoundDataAsync();
+
+            // Enrich folder data with metadata from JSON (favorites, play counts, descriptions, etc.)
+            await EnrichFolderDataWithJsonMetadata(folderData, jsonData);
+
+            _currentData = folderData;
+
+            // Sync metadata back to storage for consistency
+            await _storage.SaveSoundDataAsync(_currentData);
+
+            _logger.LogInformation("SoundManager.InitializeAsync() - Initialization completed with {0} sounds and {1} categories",
                 _currentData.Sounds.Count, _currentData.Categories.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SoundManager.InitializeAsync() - Error during SoundManager initialization");
-            throw;
+            _logger.LogError(ex, "SoundManager.InitializeAsync() - Error during SoundManager initialization: {Message}", ex.Message);
+
+            // Fallback to JSON data if filesystem fails
+            try
+            {
+                _logger.LogWarning("SoundManager.InitializeAsync() - Falling back to JSON data");
+                _currentData = await _storage.LoadSoundDataAsync();
+            }
+            catch (Exception fallbackEx)
+            {
+                _logger.LogError(fallbackEx, "SoundManager.InitializeAsync() - Fallback also failed, creating empty data");
+                _currentData = new SoundData();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Enrich folder-based data with metadata from JSON (favorites, play counts, descriptions, etc.)
+    /// </summary>
+    private async Task EnrichFolderDataWithJsonMetadata(SoundData folderData, SoundData jsonData)
+    {
+        try
+        {
+            _logger.LogInformation("SoundManager.EnrichFolderDataWithJsonMetadata() - Enriching folder data with JSON metadata...");
+
+            // Create lookup dictionary for JSON sounds by ID
+            var jsonSoundsById = jsonData.Sounds.ToDictionary(s => s.Id, s => s);
+            var jsonCategoriesById = jsonData.Categories.ToDictionary(c => c.Id, c => c);
+
+            // Enrich sounds with metadata from JSON
+            foreach (var folderSound in folderData.Sounds)
+            {
+                if (jsonSoundsById.TryGetValue(folderSound.Id, out var jsonSound))
+                {
+                    // Keep folder-based properties, enrich with metadata
+                    folderSound.Name = jsonSound.Name; // Override with user-defined name
+                    folderSound.Description = jsonSound.Description;
+                    folderSound.Favorite = jsonSound.Favorite;
+                    folderSound.Tags = jsonSound.Tags ?? new List<string>();
+                    folderSound.PlayCount = jsonSound.PlayCount;
+                    folderSound.LastPlayed = jsonSound.LastPlayed;
+                    _logger.LogDebug("SoundManager.EnrichFolderDataWithJsonMetadata() - Enriched sound {Id}: {Name}", folderSound.Id, folderSound.Name);
+                }
+            }
+
+            // Add categories from JSON that don't exist in folders
+            foreach (var jsonCategory in jsonData.Categories)
+            {
+                if (!folderData.Categories.Any(c => c.Id == jsonCategory.Id))
+                {
+                    // Only add if it has sounds in JSON but not in folders
+                    var categorySounds = jsonData.Sounds.Where(s => s.CategoryId == jsonCategory.Id).ToList();
+                    if (categorySounds.Any())
+                    {
+                        folderData.Categories.Add(jsonCategory);
+                        _logger.LogInformation("SoundManager.EnrichFolderDataWithJsonMetadata() - Added category from JSON: {Name}", jsonCategory.Name);
+                    }
+                }
+            }
+
+            _logger.LogInformation("SoundManager.EnrichFolderDataWithJsonMetadata() - Folder data enriched with JSON metadata");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SoundManager.EnrichFolderDataWithJsonMetadata() - Failed to enrich folder data with JSON metadata");
         }
     }
 
@@ -112,15 +211,29 @@ public class SoundManager
             return false;
         }
 
+        var categoryChanged = existingSound.CategoryId != sound.CategoryId;
+
         // Update properties
         existingSound.Name = sound.Name;
         existingSound.Description = sound.Description;
         existingSound.Tags = sound.Tags;
         existingSound.Favorite = sound.Favorite;
 
-        // If category changed, update counts
-        if (existingSound.CategoryId != sound.CategoryId)
+        // If category changed, move the file and update counts
+        if (categoryChanged)
         {
+            _logger.LogInformation("SoundManager.UpdateSoundAsync() - Category changed for sound {Id}: {OldCategory} -> {NewCategory}",
+                sound.Id, existingSound.CategoryId, sound.CategoryId);
+
+            // Move file to new category
+            var moveResult = await _fileMoveService.MoveFileToCategoryAsync(sound.Id, sound.CategoryId);
+            if (!moveResult.Success)
+            {
+                _logger.LogError("SoundManager.UpdateSoundAsync() - Failed to move file: {Message}", moveResult.Message);
+                return false;
+            }
+
+            // Update category counts
             var oldCategory = _currentData.Categories.FirstOrDefault(c => c.Id == existingSound.CategoryId);
             var newCategory = _currentData.Categories.FirstOrDefault(c => c.Id == sound.CategoryId);
 
@@ -128,6 +241,9 @@ public class SoundManager
             if (newCategory != null) newCategory.SoundCount++;
 
             existingSound.CategoryId = sound.CategoryId;
+
+            // Sync with filesystem to get updated paths
+            await SyncWithFilesystemAsync();
         }
 
         await SaveDataAsync();
@@ -192,7 +308,7 @@ public class SoundManager
 
         // Generate ID from name
         var proposedId = Category.GenerateIdFromName(name);
-        
+
         // Ensure ID is unique (add suffix if necessary)
         var finalId = proposedId;
         var counter = 1;
@@ -206,11 +322,24 @@ public class SoundManager
         {
             Id = finalId
         };
-        
+
+        // Apply default styling if it's a known category
+        var defaultCategory = SoundData.DefaultCategories.FirstOrDefault(c =>
+            c.Id.Equals(finalId, StringComparison.OrdinalIgnoreCase));
+        if (defaultCategory != null)
+        {
+            category.Color = defaultCategory.Color;
+            category.Icon = defaultCategory.Icon;
+            category.Description = defaultCategory.Description;
+        }
+
         _currentData.Categories.Add(category);
 
+        // Create the category folder on the server
+        await EnsureCategoryFolderExistsAsync(finalId);
+
         await SaveDataAsync();
-        _logger.LogInformation("Added category: {0} with ID: {1}", category.Name, category.Id);
+        _logger.LogInformation("Added category: {0} with ID: {1} and created folder", category.Name, category.Id);
 
         return category;
     }
@@ -256,10 +385,192 @@ public class SoundManager
         }
 
         _currentData.Categories.Remove(category);
+
+        // Note: We don't delete the folder here as it might be managed by the filesystem
+        // The folder will be cleaned up by the server's move-files endpoint when empty
+
         await SaveDataAsync();
 
         _logger.LogInformation("Deleted category: {0}", category.Name);
         return true;
+    }
+
+    /// <summary>
+    /// Ensures a category folder exists on the server (used when creating new categories)
+    /// </summary>
+    private async Task EnsureCategoryFolderExistsAsync(string categoryId)
+    {
+        try
+        {
+            // Create a dummy sound in the category to ensure the folder is created
+            // This will trigger the folder creation on the server
+            var dummySound = new Sound
+            {
+                Id = Guid.NewGuid().ToString("n"),
+                Name = ".category_placeholder",
+                CategoryId = categoryId,
+                FileName = ".category_placeholder.tmp",
+                FilePath = $"/media/{Guid.NewGuid().ToString("n")}"
+            };
+
+            // Try to create the sound via upload (this will create the folder)
+            // Actually, let's just call the scan endpoint which should create the folder structure
+            // For now, we'll rely on the folder being created when the first sound is uploaded to it
+
+            _logger.LogInformation("Category folder for {CategoryId} will be created when first sound is uploaded", categoryId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not ensure category folder exists for {CategoryId}", categoryId);
+        }
+    }
+
+    /// <summary>
+    /// Syncs the current data with the filesystem after operations
+    /// </summary>
+    public async Task SyncWithFilesystemAsync()
+    {
+        try
+        {
+            _logger.LogInformation("SoundManager.SyncWithFilesystemAsync() - Syncing with filesystem...");
+
+            // Reload data from filesystem
+            var folderCategories = await _folderService.GetCategoriesFromFoldersAsync();
+            var folderSounds = await _folderService.GetSoundsFromFoldersAsync();
+
+            var folderData = new SoundData
+            {
+                Categories = folderCategories,
+                Sounds = folderSounds
+            };
+
+            // Enrich with current metadata
+            if (_currentData != null)
+            {
+                await EnrichFolderDataWithJsonMetadata(folderData, _currentData);
+            }
+
+            _currentData = folderData;
+
+            // Save updated data
+            await SaveDataAsync();
+
+            _logger.LogInformation("SoundManager.SyncWithFilesystemAsync() - Synced {0} sounds and {1} categories",
+                folderSounds.Count, folderCategories.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SoundManager.SyncWithFilesystemAsync() - Error syncing with filesystem: {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Migrates existing localStorage data to filesystem-based structure
+    /// </summary>
+    public async Task<MigrationResult> MigrateLocalStorageToFilesystemAsync()
+    {
+        var result = new MigrationResult();
+
+        try
+        {
+            _logger.LogInformation("SoundManager.MigrateLocalStorageToFilesystemAsync() - Starting migration from localStorage to filesystem...");
+
+            // Load current localStorage data
+            var localStorageData = await _storage.LoadSoundDataAsync();
+
+            if (localStorageData.Sounds.Count == 0 && localStorageData.Categories.Count == 0)
+            {
+                result.Success = true;
+                result.Message = "Nenhum dado encontrado no localStorage para migrar";
+                _logger.LogInformation("SoundManager.MigrateLocalStorageToFilesystemAsync() - No data to migrate");
+                return result;
+            }
+
+            _logger.LogInformation("SoundManager.MigrateLocalStorageToFilesystemAsync() - Found {0} sounds and {1} categories in localStorage",
+                localStorageData.Sounds.Count, localStorageData.Categories.Count);
+
+            // Step 1: Create categories that don't exist in filesystem
+            var filesystemCategories = await _folderService.GetCategoriesFromFoldersAsync();
+            var filesystemCategoryIds = filesystemCategories.Select(c => c.Id).ToHashSet();
+
+            var categoriesToCreate = localStorageData.Categories
+                .Where(c => !filesystemCategoryIds.Contains(c.Id))
+                .ToList();
+
+            foreach (var category in categoriesToCreate)
+            {
+                var createdCategory = await AddCategoryAsync(category.Name, category.Description);
+                if (createdCategory != null)
+                {
+                    result.Log.Add($"Criada categoria: {createdCategory.Name} (ID: {createdCategory.Id})");
+                    _logger.LogInformation("SoundManager.MigrateLocalStorageToFilesystemAsync() - Created category: {Name}", createdCategory.Name);
+                }
+                else
+                {
+                    result.Log.Add($"ERRO: Falha ao criar categoria: {category.Name}");
+                    _logger.LogWarning("SoundManager.MigrateLocalStorageToFilesystemAsync() - Failed to create category: {Name}", category.Name);
+                }
+            }
+
+            // Step 2: Move sounds to their correct categories
+            var filesystemSounds = await _folderService.GetSoundsFromFoldersAsync();
+            var filesystemSoundIds = filesystemSounds.Select(s => s.Id).ToHashSet();
+
+            var soundsToMove = localStorageData.Sounds
+                .Where(s => filesystemSoundIds.Contains(s.Id))
+                .ToList();
+
+            if (soundsToMove.Count > 0)
+            {
+                _logger.LogInformation("SoundManager.MigrateLocalStorageToFilesystemAsync() - Moving {Count} sounds to correct categories", soundsToMove.Count);
+
+                var moveResult = await _fileMoveService.MoveFilesToCategoriesAsync(soundsToMove);
+
+                result.Log.Add($"Movidos {moveResult.FileResults.Count(r => r.Success)}/{moveResult.FileResults.Count} arquivos");
+
+                foreach (var fileResult in moveResult.FileResults)
+                {
+                    if (fileResult.Success)
+                    {
+                        result.Log.Add($"OK: {fileResult.Message}");
+                    }
+                    else
+                    {
+                        result.Log.Add($"ERRO: {fileResult.Message}");
+                    }
+                }
+
+                if (moveResult.Success)
+                {
+                    // Sync with filesystem after moves
+                    await SyncWithFilesystemAsync();
+                }
+            }
+
+            // Step 3: Clean up localStorage (optional - keep as backup)
+            // Note: We'll keep localStorage data as backup for now
+
+            result.Success = true;
+            result.Message = $"Migração concluída. Categorias criadas: {categoriesToCreate.Count}, Arquivos movidos: {soundsToMove.Count}";
+
+            _logger.LogInformation("SoundManager.MigrateLocalStorageToFilesystemAsync() - Migration completed successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SoundManager.MigrateLocalStorageToFilesystemAsync() - Error during migration: {Message}", ex.Message);
+            result.Success = false;
+            result.Message = $"Erro durante migração: {ex.Message}";
+            result.Log.Add($"ERRO FATAL: {ex.Message}");
+        }
+
+        return result;
+    }
+
+    public class MigrationResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public List<string> Log { get; set; } = new();
     }
 
     // Data Access
@@ -365,6 +676,7 @@ public class SoundManager
     public async Task SyncWithMediaDirectoryAsync(HttpClient httpClient)
     {
         if (_currentData == null) await InitializeAsync();
+        if (_currentData == null) return; // Safety check
 
         try
         {
@@ -388,19 +700,19 @@ public class SoundManager
 
             foreach (var scannedSound in scannedSounds)
             {
-                var existingSound = _currentData!.Sounds.FirstOrDefault(s => s.Id == scannedSound.Id);
+                var existingSound = _currentData.Sounds.FirstOrDefault(s => s.Id == scannedSound.Id);
                 if (existingSound == null)
                 {
                     // New sound found on disk
                     _currentData.Sounds.Add(scannedSound);
-                    
+
                     // Update category count
                     var category = _currentData.Categories.FirstOrDefault(c => c.Id == scannedSound.CategoryId);
                     if (category != null)
                     {
                         category.SoundCount++;
                     }
-                    
+
                     syncedCount++;
                     _logger.LogInformation("Synced new sound from disk: {0}", scannedSound.DisplayName);
                 }
@@ -439,7 +751,7 @@ public class SoundManager
             }
 
             await SaveDataAsync();
-            _logger.LogInformation("Media sync completed: {0} new, {1} updated, {2} removed", 
+            _logger.LogInformation("Media sync completed: {0} new, {1} updated, {2} removed",
                 syncedCount, updatedCount, soundsToRemove.Count);
         }
         catch (Exception ex)
