@@ -1,4 +1,5 @@
 using fakeinstants.Models;
+using System.Net.Http.Json;
 
 namespace fakeinstants.Services;
 
@@ -52,12 +53,12 @@ public class SoundManager
             Description = description,
             CategoryId = categoryId,
             FileName = fileName,
-            FilePath = $"audio/categories/{category.Name}/{fileName}",
+            FilePath = string.Empty, // Will be set by backend on upload
             Format = Path.GetExtension(fileName).TrimStart('.').ToLower()
         };
 
-        // Note: Duration will be calculated when first played to avoid blocking initialization
-        // sound.Duration = await _audioService.GetAudioDurationAsync(sound.FilePath);
+        // Note: This method is deprecated. Use AddProcessedSoundAsync with backend-provided Sound instead
+        _logger.LogWarning("AddSoundAsync is deprecated. Use AddProcessedSoundAsync with backend upload.");
 
         _currentData.Sounds.Add(sound);
         category.SoundCount++;
@@ -182,17 +183,34 @@ public class SoundManager
     {
         if (_currentData == null) await InitializeAsync();
 
+        // Check if category with same name already exists
         if (_currentData!.Categories.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
         {
             _logger.LogWarning("Category with name '{0}' already exists", name);
             return null;
         }
 
-        var category = new Category(name, description);
+        // Generate ID from name
+        var proposedId = Category.GenerateIdFromName(name);
+        
+        // Ensure ID is unique (add suffix if necessary)
+        var finalId = proposedId;
+        var counter = 1;
+        while (_currentData.Categories.Any(c => c.Id == finalId))
+        {
+            finalId = $"{proposedId}-{counter}";
+            counter++;
+        }
+
+        var category = new Category(name, description)
+        {
+            Id = finalId
+        };
+        
         _currentData.Categories.Add(category);
 
         await SaveDataAsync();
-        _logger.LogInformation("Added category: {0}", category.Name);
+        _logger.LogInformation("Added category: {0} with ID: {1}", category.Name, category.Id);
 
         return category;
     }
@@ -298,6 +316,135 @@ public class SoundManager
         if (_currentData != null)
         {
             await _storage.SaveSoundDataAsync(_currentData);
+        }
+    }
+
+    public async Task FixCategoryIdsAsync()
+    {
+        if (_currentData == null) await InitializeAsync();
+
+        var categoriesFixed = 0;
+
+        foreach (var category in _currentData!.Categories.ToList())
+        {
+            // Check if ID is a GUID
+            if (Guid.TryParse(category.Id, out _))
+            {
+                var oldId = category.Id;
+                var newId = Category.GenerateIdFromName(category.Name);
+                
+                // Ensure uniqueness
+                var finalId = newId;
+                var counter = 1;
+                while (_currentData.Categories.Any(c => c.Id == finalId && c.Id != oldId))
+                {
+                    finalId = $"{newId}-{counter}";
+                    counter++;
+                }
+
+                category.Id = finalId;
+
+                // Update all sounds that reference this category
+                foreach (var sound in _currentData.Sounds.Where(s => s.CategoryId == oldId))
+                {
+                    sound.CategoryId = finalId;
+                }
+
+                categoriesFixed++;
+                _logger.LogInformation("Fixed category ID: {0} -> {1}", oldId, finalId);
+            }
+        }
+
+        if (categoriesFixed > 0)
+        {
+            await SaveDataAsync();
+            _logger.LogInformation("Fixed {0} category IDs", categoriesFixed);
+        }
+    }
+
+    public async Task SyncWithMediaDirectoryAsync(HttpClient httpClient)
+    {
+        if (_currentData == null) await InitializeAsync();
+
+        try
+        {
+            // Call /media/scan endpoint
+            var response = await httpClient.GetAsync("/media/scan");
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Failed to scan media directory: {0}", response.StatusCode);
+                return;
+            }
+
+            var scannedSounds = await response.Content.ReadFromJsonAsync<List<Sound>>();
+            if (scannedSounds == null || scannedSounds.Count == 0)
+            {
+                _logger.LogInformation("No sounds found in media directory");
+                return;
+            }
+
+            var syncedCount = 0;
+            var updatedCount = 0;
+
+            foreach (var scannedSound in scannedSounds)
+            {
+                var existingSound = _currentData!.Sounds.FirstOrDefault(s => s.Id == scannedSound.Id);
+                if (existingSound == null)
+                {
+                    // New sound found on disk
+                    _currentData.Sounds.Add(scannedSound);
+                    
+                    // Update category count
+                    var category = _currentData.Categories.FirstOrDefault(c => c.Id == scannedSound.CategoryId);
+                    if (category != null)
+                    {
+                        category.SoundCount++;
+                    }
+                    
+                    syncedCount++;
+                    _logger.LogInformation("Synced new sound from disk: {0}", scannedSound.DisplayName);
+                }
+                else
+                {
+                    // Update FilePath if changed
+                    if (existingSound.FilePath != scannedSound.FilePath)
+                    {
+                        existingSound.FilePath = scannedSound.FilePath;
+                        existingSound.FileName = scannedSound.FileName;
+                        existingSound.FileSize = scannedSound.FileSize;
+                        updatedCount++;
+                    }
+                }
+            }
+
+            // Remove sounds that no longer exist on disk
+            var soundsToRemove = new List<Sound>();
+            foreach (var sound in _currentData.Sounds)
+            {
+                if (!scannedSounds.Any(s => s.Id == sound.Id))
+                {
+                    soundsToRemove.Add(sound);
+                }
+            }
+
+            foreach (var sound in soundsToRemove)
+            {
+                _currentData.Sounds.Remove(sound);
+                var category = _currentData.Categories.FirstOrDefault(c => c.Id == sound.CategoryId);
+                if (category != null)
+                {
+                    category.SoundCount--;
+                }
+                _logger.LogInformation("Removed sound no longer on disk: {0}", sound.DisplayName);
+            }
+
+            await SaveDataAsync();
+            _logger.LogInformation("Media sync completed: {0} new, {1} updated, {2} removed", 
+                syncedCount, updatedCount, soundsToRemove.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error syncing with media directory");
         }
     }
 }

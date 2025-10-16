@@ -1,0 +1,150 @@
+@page "/fix-categories"
+@inject SoundManager SoundManager
+@inject ILogger<FixCategories> Logger
+
+<PageTitle>Corrigir IDs de Categorias - FakeInstants</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header">
+            <h3>Correção de IDs de Categorias</h3>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>Sobre esta ferramenta:</strong>
+                <p class="mb-0 mt-2">
+                    Esta ferramenta converte IDs de categorias que são GUIDs para identificadores legíveis baseados no nome.
+                    Exemplo: "abc123-def456" → "memes"
+                </p>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    @errorMessage
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(successMessage))
+            {
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle me-2"></i>
+                    @successMessage
+                </div>
+            }
+
+            @if (categoriesWithGuids.Any())
+            {
+                <div class="alert alert-warning">
+                    <strong>Categorias com GUIDs detectadas:</strong>
+                    <ul class="mb-0 mt-2">
+                        @foreach (var cat in categoriesWithGuids)
+                        {
+                            <li>
+                                <strong>@cat.Name</strong>: <code>@cat.Id</code>
+                                → será convertido para: <code>@fakeinstants.Models.Category.GenerateIdFromName(cat.Name)</code>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+            else if (categories.Any())
+            {
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle me-2"></i>
+                    Todas as categorias já têm IDs legíveis. Nenhuma correção necessária.
+                </div>
+            }
+
+            <div class="d-grid gap-2">
+                <button class="btn btn-primary btn-lg" 
+                        @onclick="ExecuteFix" 
+                        disabled="@(isFixing || !categoriesWithGuids.Any())">
+                    @if (isFixing)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        <text>Corrigindo...</text>
+                    }
+                    else
+                    {
+                        <i class="fas fa-wrench me-2"></i>
+                        <text>Corrigir IDs de Categorias</text>
+                    }
+                </button>
+                
+                <a href="/categories" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-2"></i>Voltar para Categorias
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isFixing = false;
+    private string? errorMessage;
+    private string? successMessage;
+    private List<fakeinstants.Models.Category> categories = new();
+    private List<fakeinstants.Models.Category> categoriesWithGuids = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadCategories();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading categories");
+            errorMessage = $"Erro ao carregar categorias: {ex.Message}";
+        }
+    }
+
+    private async Task LoadCategories()
+    {
+        await SoundManager.InitializeAsync();
+        categories = await SoundManager.GetAllCategoriesAsync();
+        
+        categoriesWithGuids = categories
+            .Where(c => Guid.TryParse(c.Id, out _))
+            .ToList();
+    }
+
+    private async Task ExecuteFix()
+    {
+        if (isFixing) return;
+
+        try
+        {
+            isFixing = true;
+            errorMessage = null;
+            successMessage = null;
+            StateHasChanged();
+
+            await SoundManager.FixCategoryIdsAsync();
+            await LoadCategories();
+
+            if (categoriesWithGuids.Count == 0)
+            {
+                successMessage = "IDs de categorias corrigidos com sucesso! Agora você pode fazer upload de arquivos.";
+            }
+            else
+            {
+                errorMessage = "Ainda existem categorias com GUIDs. Tente novamente.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error fixing categories");
+            errorMessage = $"Erro ao corrigir categorias: {ex.Message}";
+        }
+        finally
+        {
+            isFixing = false;
+            StateHasChanged();
+        }
+    }
+}
+

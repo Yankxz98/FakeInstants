@@ -65,7 +65,7 @@ app.MapPost("/upload", async (HttpRequest req) =>
     var file = form.Files.GetFile("file");
     var categoryId = form["categoryId"].FirstOrDefault();
 
-    if (file is null || file.Length == 0) return Results.BadRequest();
+    if (file is null || file.Length == 0) return Results.BadRequest("No file provided");
 
     // Validate extension
     var id = Guid.NewGuid().ToString("n");
@@ -79,8 +79,25 @@ app.MapPost("/upload", async (HttpRequest req) =>
         return Results.BadRequest($"Unsupported file type: {ext}");
     }
 
+    // Validate categoryId: must not be empty, must not be a GUID, and must be a valid folder name
+    if (string.IsNullOrWhiteSpace(categoryId))
+    {
+        return Results.BadRequest("categoryId is required");
+    }
+
+    // Reject GUID-like categoryIds
+    if (Guid.TryParse(categoryId, out _))
+    {
+        return Results.BadRequest("categoryId cannot be a GUID. Use readable category identifiers.");
+    }
+
     var safeName = RemoveInvalidFileNameChars(Path.GetFileNameWithoutExtension(file.FileName));
-    var safeCategory = string.IsNullOrWhiteSpace(categoryId) ? "uncategorized" : RemoveInvalidFileNameChars(categoryId);
+    var safeCategory = RemoveInvalidFileNameChars(categoryId);
+
+    if (string.IsNullOrWhiteSpace(safeCategory))
+    {
+        return Results.BadRequest("Invalid categoryId");
+    }
 
     var relativePath = Path.Combine(safeCategory, $"{safeName}-{id}{ext}");
     var physicalPath = Path.Combine(indexStore.MediaRoot, relativePath);
@@ -111,6 +128,184 @@ app.MapPost("/upload", async (HttpRequest req) =>
 
     return Results.Ok(sound);
 });
+
+app.MapGet("/media/scan", () =>
+{
+    if (string.IsNullOrWhiteSpace(absoluteMediaRoot))
+    {
+        return Results.Problem("MEDIA_ROOT not configured");
+    }
+
+    var scannedSounds = new List<SoundDto>();
+    var mediaDir = new DirectoryInfo(indexStore.MediaRoot);
+
+    if (!mediaDir.Exists)
+    {
+        return Results.Ok(scannedSounds);
+    }
+
+    // Scan all subdirectories (categories)
+    foreach (var categoryDir in mediaDir.GetDirectories())
+    {
+        // Skip hidden directories and index file
+        if (categoryDir.Name.StartsWith("."))
+            continue;
+
+        var categoryId = categoryDir.Name;
+
+        foreach (var audioFile in categoryDir.GetFiles("*.mp3")
+            .Concat(categoryDir.GetFiles("*.wav"))
+            .Concat(categoryDir.GetFiles("*.ogg"))
+            .Concat(categoryDir.GetFiles("*.aac"))
+            .Concat(categoryDir.GetFiles("*.m4a"))
+            .Concat(categoryDir.GetFiles("*.flac")))
+        {
+            // Try to extract ID from filename pattern: name-{id}.ext
+            var fileNameWithoutExt = Path.GetFileNameWithoutExtension(audioFile.Name);
+            var lastDashIndex = fileNameWithoutExt.LastIndexOf('-');
+            
+            string id;
+            string name;
+            
+            if (lastDashIndex > 0 && lastDashIndex < fileNameWithoutExt.Length - 1)
+            {
+                var potentialId = fileNameWithoutExt.Substring(lastDashIndex + 1);
+                if (potentialId.Length == 32) // GUID without hyphens
+                {
+                    id = potentialId;
+                    name = fileNameWithoutExt.Substring(0, lastDashIndex);
+                }
+                else
+                {
+                    // Generate new ID if pattern doesn't match
+                    id = Guid.NewGuid().ToString("n");
+                    name = fileNameWithoutExt;
+                }
+            }
+            else
+            {
+                // Generate new ID
+                id = Guid.NewGuid().ToString("n");
+                name = fileNameWithoutExt;
+            }
+
+            var relativePath = Path.Combine(categoryId, audioFile.Name);
+            var ext = audioFile.Extension.TrimStart('.').ToLowerInvariant();
+
+            // Update index if not present
+            if (indexStore.ResolveRelativePathFromId(id) == null)
+            {
+                indexStore.SaveIndex(id, relativePath);
+            }
+
+            scannedSounds.Add(new SoundDto
+            {
+                Id = id,
+                Name = name,
+                Description = string.Empty,
+                CategoryId = categoryId,
+                FileName = audioFile.Name,
+                FilePath = $"/media/{id}",
+                FileSize = audioFile.Length,
+                Duration = 0,
+                Format = ext,
+                CreatedAt = audioFile.CreationTimeUtc
+            });
+        }
+    }
+
+    return Results.Ok(scannedSounds);
+});
+
+app.MapPost("/media/migrate", async () =>
+{
+    if (string.IsNullOrWhiteSpace(absoluteMediaRoot))
+    {
+        return Results.Problem("MEDIA_ROOT not configured");
+    }
+
+    var migrationLog = new List<string>();
+    var mediaDir = new DirectoryInfo(indexStore.MediaRoot);
+
+    if (!mediaDir.Exists)
+    {
+        return Results.Ok(new { message = "No media directory found", log = migrationLog });
+    }
+
+    // Load current index
+    var allEntries = indexStore.GetAllEntries();
+
+    foreach (var entry in allEntries)
+    {
+        var id = entry.Key;
+        var oldRelativePath = entry.Value;
+        var oldPhysicalPath = Path.Combine(indexStore.MediaRoot, oldRelativePath);
+
+        if (!File.Exists(oldPhysicalPath))
+        {
+            migrationLog.Add($"SKIP: File not found - {oldRelativePath}");
+            continue;
+        }
+
+        // Check if path contains GUID directory
+        var parts = oldRelativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (parts.Length < 2)
+        {
+            migrationLog.Add($"SKIP: Invalid path structure - {oldRelativePath}");
+            continue;
+        }
+
+        var firstDir = parts[0];
+        
+        // Check if first directory is a GUID
+        if (!Guid.TryParse(firstDir, out _))
+        {
+            migrationLog.Add($"OK: Already migrated - {oldRelativePath}");
+            continue;
+        }
+
+        // Need to determine correct category - this requires external data (sounds.json)
+        // For now, move to "uncategorized"
+        var fileName = Path.GetFileName(oldPhysicalPath);
+        var newRelativePath = Path.Combine("uncategorized", fileName);
+        var newPhysicalPath = Path.Combine(indexStore.MediaRoot, newRelativePath);
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(newPhysicalPath)!);
+            File.Move(oldPhysicalPath, newPhysicalPath, overwrite: false);
+            indexStore.SaveIndex(id, newRelativePath);
+            migrationLog.Add($"MIGRATED: {oldRelativePath} -> {newRelativePath}");
+        }
+        catch (Exception ex)
+        {
+            migrationLog.Add($"ERROR: {oldRelativePath} - {ex.Message}");
+        }
+    }
+
+    // Clean up empty GUID directories
+    foreach (var dir in mediaDir.GetDirectories())
+    {
+        if (Guid.TryParse(dir.Name, out _))
+        {
+            try
+            {
+                if (!dir.GetFiles("*", SearchOption.AllDirectories).Any())
+                {
+                    dir.Delete(recursive: true);
+                    migrationLog.Add($"CLEANED: Removed empty directory - {dir.Name}");
+                }
+            }
+            catch (Exception ex)
+            {
+                migrationLog.Add($"ERROR: Could not delete directory {dir.Name} - {ex.Message}");
+            }
+        }
+    }
+
+    return Results.Ok(new { message = "Migration completed", log = migrationLog });
+});
+
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 app.MapFallbackToFile("index.html");
@@ -177,6 +372,11 @@ public sealed class MediaIndexStore
             map[id] = relativePath;
             SaveDictionary(map);
         }
+    }
+
+    public Dictionary<string, string> GetAllEntries()
+    {
+        return LoadDictionary();
     }
 
     private Dictionary<string, string> LoadDictionary()

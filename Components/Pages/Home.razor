@@ -3,24 +3,38 @@
 @using fakeinstants.Services
 @inject SoundManager SoundManager
 @inject ILogger<Home> Logger
+@inject HttpClient Http
 
 <PageTitle>FakeInstants - Home</PageTitle>
 
 <div class="container-fluid">
-    <ul class="nav nav-tabs">
-        <li class="nav-item">
-            <a class="nav-link @(selectedCategoryId == null ? "active" : "")" href="#" @onclick='() => SelectCategory(null)' @onclick:preventDefault="true">Geral</a>
-        </li>
-        @if (categories != null)
-        {
-            @foreach (var category in categories)
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <ul class="nav nav-tabs flex-grow-1 border-0">
+            <li class="nav-item">
+                <a class="nav-link @(selectedCategoryId == null ? "active" : "")" href="#" @onclick='() => SelectCategory(null)' @onclick:preventDefault="true">Geral</a>
+            </li>
+            @if (categories != null)
             {
-                <li class="nav-item">
-                    <a class="nav-link @(selectedCategoryId == category.Id ? "active" : "")" href="#" @onclick='() => SelectCategory(category.Id)' @onclick:preventDefault="true">@category.Name</a>
-                </li>
+                @foreach (var category in categories)
+                {
+                    <li class="nav-item">
+                        <a class="nav-link @(selectedCategoryId == category.Id ? "active" : "")" href="#" @onclick='() => SelectCategory(category.Id)' @onclick:preventDefault="true">@category.Name</a>
+                    </li>
+                }
             }
-        }
-    </ul> 
+        </ul>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="SyncWithMedia" disabled="@isSyncing">
+            @if (isSyncing)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            else
+            {
+                <i class="fas fa-sync-alt me-1"></i>
+            }
+            Sincronizar
+        </button>
+    </div>
 
     <div class="tab-content mt-3">
         <SoundList CategoryId="@selectedCategoryId" @ref="soundListComponent" AutoLoad="true" />
@@ -31,12 +45,15 @@
     private List<Category>? categories;
     private string? selectedCategoryId = null;
     private SoundList? soundListComponent;
+    private bool isSyncing = false;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
             categories = await SoundManager.GetAllCategoriesAsync();
+            // Auto-sync on initialization
+            await SyncWithMedia();
         }
         catch (Exception ex)
         {
@@ -48,5 +65,36 @@
     {
         selectedCategoryId = categoryId;
         StateHasChanged();
+    }
+
+    private async Task SyncWithMedia()
+    {
+        if (isSyncing) return;
+
+        try
+        {
+            isSyncing = true;
+            StateHasChanged();
+
+            await SoundManager.SyncWithMediaDirectoryAsync(Http);
+            
+            // Reload categories in case new ones were created
+            categories = await SoundManager.GetAllCategoriesAsync();
+            
+            // Reload sound list
+            if (soundListComponent != null)
+            {
+                await soundListComponent.LoadDataManuallyAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error syncing with media directory");
+        }
+        finally
+        {
+            isSyncing = false;
+            StateHasChanged();
+        }
     }
 }
