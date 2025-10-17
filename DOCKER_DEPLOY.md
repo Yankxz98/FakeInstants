@@ -19,7 +19,7 @@ Este documento explica como fazer o deploy da aplicação FakeInstants no Render
 ### 2. Configurações do serviço
 
 **Build Settings:**
-- **Build Command**: `docker build -t fakeinstants .`
+- **Build Command**: (deixe em branco - Render fará automaticamente)
 - **Dockerfile Path**: `./Dockerfile` (padrão)
 
 **Runtime:**
