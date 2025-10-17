@@ -12,6 +12,10 @@ builder.Services.Configure<FormOptions>(options =>
 
 var app = builder.Build();
 
+app.Logger.LogInformation("=== SERVER STARTING ===");
+app.Logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
+app.Logger.LogInformation("IsDevelopment: {IsDevelopment}", app.Environment.IsDevelopment());
+
 // Enable CORS for the Blazor client
 app.UseCors(policy =>
     policy.AllowAnyOrigin()
@@ -20,19 +24,40 @@ app.UseCors(policy =>
 
 var mediaRoot = Environment.GetEnvironmentVariable("MEDIA_ROOT");
 string? absoluteMediaRoot = null;
+
+app.Logger.LogInformation("=== MEDIA CONFIGURATION ===");
+app.Logger.LogInformation("ContentRootPath: {ContentRootPath}", app.Environment.ContentRootPath);
+app.Logger.LogInformation("MEDIA_ROOT environment variable: '{MediaRoot}'", mediaRoot ?? "NOT SET");
+
 if (string.IsNullOrWhiteSpace(mediaRoot))
 {
     app.Logger.LogWarning("MEDIA_ROOT is not configured. Set MEDIA_ROOT to a writable directory.");
+    app.Logger.LogWarning("Using default media directory: media/");
 }
 else
 {
     absoluteMediaRoot = Path.IsPathRooted(mediaRoot)
         ? mediaRoot
         : Path.Combine(app.Environment.ContentRootPath, mediaRoot);
-    Directory.CreateDirectory(absoluteMediaRoot);
+
+    app.Logger.LogInformation("Calculated absolute media root: {AbsoluteMediaRoot}", absoluteMediaRoot);
+
+    try
+    {
+        Directory.CreateDirectory(absoluteMediaRoot);
+        app.Logger.LogInformation("Media directory created/verified: {AbsoluteMediaRoot}", absoluteMediaRoot);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Failed to create media directory: {AbsoluteMediaRoot}", absoluteMediaRoot);
+    }
 }
 
-var indexStore = new MediaIndexStore(absoluteMediaRoot ?? Path.Combine(app.Environment.ContentRootPath, "media"));
+var finalMediaRoot = absoluteMediaRoot ?? Path.Combine(app.Environment.ContentRootPath, "media");
+app.Logger.LogInformation("Final media root path: {FinalMediaRoot}", finalMediaRoot);
+app.Logger.LogInformation("Media root exists: {Exists}", Directory.Exists(finalMediaRoot));
+
+var indexStore = new MediaIndexStore(finalMediaRoot);
 
 app.MapGet("/media/{id}", (string id, HttpContext ctx) =>
 {
@@ -138,17 +163,37 @@ app.MapPost("/upload", async (HttpRequest req) =>
 
 app.MapGet("/media/scan", () =>
 {
+    app.Logger.LogInformation("=== MEDIA SCAN REQUEST ===");
+
     if (string.IsNullOrWhiteSpace(absoluteMediaRoot))
     {
+        app.Logger.LogError("MEDIA_ROOT not configured - cannot scan media");
         return Results.Problem("MEDIA_ROOT not configured");
     }
 
     var scannedSounds = new List<SoundDto>();
     var mediaDir = new DirectoryInfo(indexStore.MediaRoot);
 
+    app.Logger.LogInformation("Scanning media directory: {MediaRoot}", indexStore.MediaRoot);
+    app.Logger.LogInformation("Media directory exists: {Exists}", mediaDir.Exists);
+
     if (!mediaDir.Exists)
     {
+        app.Logger.LogWarning("Media directory does not exist: {MediaRoot}", indexStore.MediaRoot);
         return Results.Ok(scannedSounds);
+    }
+
+    // List all directories and files for debugging
+    var allDirs = mediaDir.GetDirectories();
+    var allFiles = mediaDir.GetFiles("*", SearchOption.AllDirectories);
+
+    app.Logger.LogInformation("Found {DirectoryCount} directories and {FileCount} total files",
+        allDirs.Length, allFiles.Length);
+
+    foreach (var dir in allDirs)
+    {
+        app.Logger.LogInformation("Directory: {DirName} (Files: {FileCount})",
+            dir.Name, dir.GetFiles().Length);
     }
 
     // Scan all subdirectories (categories)
@@ -156,17 +201,30 @@ app.MapGet("/media/scan", () =>
     {
         // Skip hidden directories and index file
         if (categoryDir.Name.StartsWith("."))
+        {
+            app.Logger.LogInformation("Skipping hidden directory: {DirName}", categoryDir.Name);
             continue;
+        }
 
         var categoryId = categoryDir.Name;
+        app.Logger.LogInformation("Scanning category: {CategoryId}", categoryId);
 
-        foreach (var audioFile in categoryDir.GetFiles("*.mp3")
+        var audioFiles = categoryDir.GetFiles("*.mp3")
             .Concat(categoryDir.GetFiles("*.wav"))
             .Concat(categoryDir.GetFiles("*.ogg"))
             .Concat(categoryDir.GetFiles("*.aac"))
             .Concat(categoryDir.GetFiles("*.m4a"))
-            .Concat(categoryDir.GetFiles("*.flac")))
+            .Concat(categoryDir.GetFiles("*.flac"))
+            .ToArray();
+
+        app.Logger.LogInformation("Found {AudioFileCount} audio files in category {CategoryId}",
+            audioFiles.Length, categoryId);
+
+        foreach (var audioFile in audioFiles)
         {
+            app.Logger.LogInformation("Processing audio file: {FileName} ({Size} bytes)",
+                audioFile.Name, audioFile.Length);
+
             // Use incremental ID for new files
             var fileNameWithoutExt = Path.GetFileNameWithoutExtension(audioFile.Name);
             string id;
@@ -180,12 +238,14 @@ app.MapGet("/media/scan", () =>
             {
                 id = existingId;
                 name = fileNameWithoutExt;
+                app.Logger.LogInformation("File already indexed with ID: {Id}", id);
             }
             else
             {
                 // Generate new incremental ID for new files
                 id = indexStore.GenerateNextId();
                 name = fileNameWithoutExt;
+                app.Logger.LogInformation("Generated new ID for file: {Id}", id);
             }
 
             var relativePath = Path.Combine(categoryId, audioFile.Name);
@@ -195,9 +255,10 @@ app.MapGet("/media/scan", () =>
             if (indexStore.ResolveRelativePathFromId(id) == null)
             {
                 indexStore.SaveIndex(id, relativePath);
+                app.Logger.LogInformation("Added to index: {Id} -> {RelativePath}", id, relativePath);
             }
 
-            scannedSounds.Add(new SoundDto
+            var soundDto = new SoundDto
             {
                 Id = id,
                 Name = name,
@@ -209,7 +270,11 @@ app.MapGet("/media/scan", () =>
                 Duration = 0,
                 Format = ext,
                 CreatedAt = audioFile.CreationTimeUtc
-            });
+            };
+
+            scannedSounds.Add(soundDto);
+            app.Logger.LogInformation("Added sound to results: {Id} - {Name}.{Format}",
+                soundDto.Id, soundDto.Name, soundDto.Format);
         }
     }
 
@@ -385,24 +450,37 @@ app.MapPost("/media/create-category", async (HttpRequest req) =>
 
 app.MapGet("/media/categories", () =>
 {
+    app.Logger.LogInformation("=== MEDIA CATEGORIES REQUEST ===");
+
     if (string.IsNullOrWhiteSpace(absoluteMediaRoot))
     {
+        app.Logger.LogError("MEDIA_ROOT not configured - cannot list categories");
         return Results.Problem("MEDIA_ROOT not configured");
     }
 
     var mediaDir = new DirectoryInfo(indexStore.MediaRoot);
+    app.Logger.LogInformation("Categories - Media directory: {MediaRoot} (exists: {Exists})",
+        indexStore.MediaRoot, mediaDir.Exists);
+
     if (!mediaDir.Exists)
     {
+        app.Logger.LogWarning("Media directory does not exist: {MediaRoot}", indexStore.MediaRoot);
         return Results.Ok(new List<CategoryInfo>());
     }
 
     var categories = new List<CategoryInfo>();
+    var categoryDirs = mediaDir.GetDirectories();
 
-    foreach (var categoryDir in mediaDir.GetDirectories())
+    app.Logger.LogInformation("Found {CategoryDirCount} directories to check for categories", categoryDirs.Length);
+
+    foreach (var categoryDir in categoryDirs)
     {
         // Skip hidden directories and index file
         if (categoryDir.Name.StartsWith("."))
+        {
+            app.Logger.LogInformation("Skipping hidden directory: {DirName}", categoryDir.Name);
             continue;
+        }
 
         var categoryId = categoryDir.Name;
 
@@ -415,14 +493,19 @@ app.MapGet("/media/categories", () =>
             .Concat(categoryDir.GetFiles("*.flac"))
             .ToList();
 
-        categories.Add(new CategoryInfo
+        var categoryInfo = new CategoryInfo
         {
             Id = categoryId,
             Name = FormatCategoryNameFromId(categoryId),
             SoundCount = audioFiles.Count
-        });
+        };
+
+        categories.Add(categoryInfo);
+        app.Logger.LogInformation("Added category: {Id} ({Name}) - {SoundCount} sounds",
+            categoryInfo.Id, categoryInfo.Name, categoryInfo.SoundCount);
     }
 
+    app.Logger.LogInformation("Returning {CategoryCount} categories total", categories.Count);
     return Results.Ok(categories);
 });
 
