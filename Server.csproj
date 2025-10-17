@@ -7,7 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\fakeinstants.csproj" />
+    <ProjectReference Include="fakeinstants.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Program.cs" />
   </ItemGroup>
 </Project>
 

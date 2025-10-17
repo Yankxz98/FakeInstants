@@ -2,8 +2,16 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy all project files
-COPY . .
+# Copy Server project files first
+COPY ["Server.csproj", "./"]
+COPY ["Server/", "./Server/"]
+
+# Copy the referenced Blazor project
+COPY ["fakeinstants.csproj", "./"]
+COPY ["Components/", "./Components/"]
+COPY ["Models/", "./Models/"]
+COPY ["Services/", "./Services/"]
+COPY ["wwwroot/", "./wwwroot/"]
 
 # Restore dependencies
 RUN dotnet restore Server.csproj
