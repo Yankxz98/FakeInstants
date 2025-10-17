@@ -57,6 +57,26 @@ docker run -p 8080:8080 -v ./media:/app/media fakeinstants
 
 A aplicação estará disponível em `http://localhost:8080`
 
+## Troubleshooting
+
+### Problemas de build no Docker
+
+Se encontrar erros de compilação relacionados a projetos referenciados:
+
+1. **Erro "Program does not contain a static 'Main' method"**: O projeto Blazor está sendo compilado incorretamente. Verifique se o `Program.cs` está sendo copiado no Dockerfile.
+
+2. **Erro "The referenced project does not exist"**: Caminhos de referência estão incorretos. No Docker, todos os arquivos estão no mesmo diretório.
+
+3. **Conflito de Program.cs**: O Server.csproj tem exclusão para `Program.cs` para evitar conflitos com o projeto Blazor.
+
+### Estrutura de arquivos no Docker
+
+O Dockerfile copia:
+- `Server.csproj` e pasta `Server/` (projeto ASP.NET Core)
+- `fakeinstants.csproj`, `Components/`, `Models/`, `Services/`, `wwwroot/`, `Program.cs` (projeto Blazor referenciado)
+
+O `Server.csproj` referencia o projeto Blazor mas exclui o `Program.cs` da raiz para evitar conflitos.
+
 ## Health Check
 
 A imagem inclui um health check que verifica se a aplicação está respondendo corretamente. O Render usará isso para monitorar o status do serviço.
