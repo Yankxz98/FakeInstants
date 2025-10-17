@@ -2,15 +2,67 @@
 @using fakeinstants.Models
 @using fakeinstants.Services
 @inject SoundManager SoundManager
+@inject FileMoveService FileMoveService
+@inject FolderBasedCategoryService FolderService
+@inject NavigationManager NavigationManager
 @inject ILogger<Categories> Logger
+@inject IJSRuntime JSRuntime
 
 <PageTitle>FakeInstants - Categorias</PageTitle>
 
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <h2>Gerenciamento de Categorias</h2>
-            <p class="text-muted">Organize seus sons em categorias personalizadas.</p>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h2>Gerenciamento de Categorias</h2>
+                    <p class="text-muted">Organize seus sons em categorias personalizadas.</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success btn-lg" @onclick="SaveAllChanges" disabled="@isSavingAll">
+                        @if (isSavingAll)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                            <text>Salvando...</text>
+                        }
+                        else
+                        {
+                            <i class="fas fa-save me-2"></i>
+                            <text>Salvar Tudo</text>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(saveAllMessage))
+            {
+                <div class="alert alert-@(saveAllSuccess ? "success" : "danger") alert-dismissible fade show" role="alert">
+                    <i class="fas fa-@(saveAllSuccess ? "check-circle" : "exclamation-triangle") me-2"></i>
+                    @saveAllMessage
+                    <button type="button" class="btn-close" @onclick="ClearSaveMessage"></button>
+                </div>
+            }
+
+            @if (saveAllResults != null && saveAllResults.Any())
+            {
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="fas fa-list-check me-2"></i>
+                            Detalhes da Operação (@saveAllResults.Count(r => r.Success)/@saveAllResults.Count arquivos processados)
+                        </h6>
+                    </div>
+                    <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+                        @foreach (var result in saveAllResults)
+                        {
+                            <div class="d-flex align-items-center mb-1">
+                                <i class="fas fa-@(result.Success ? "check text-success" : "times text-danger") me-2" style="min-width: 16px;"></i>
+                                <small class="@(result.Success ? "text-success" : "text-danger")">@result.Message</small>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
         </div>
     </div>
 
@@ -27,28 +79,225 @@
                     }
                     else
                     {
-                        <table class="table table-striped">
-                            <thead>
-                                <tr>
-                                    <th>Nome</th>
-                                    <th>Sons</th>
-                                    <th>Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var category in categories)
+                        <!-- Geral - Todos os sons -->
+                        <div class="card mb-3 border-primary">
+                            <div class="card-header d-flex justify-content-between align-items-center bg-primary bg-opacity-10">
+                                <div>
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-globe me-2 text-primary"></i>
+                                        Geral - Todos os Sons
+                                    </h5>
+                                    <small class="text-muted">@allSoundsCount som(ns) no total</small>
+                                </div>
+                                <div class="btn-group">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleAllSounds()">
+                                        <i class="fas fa-@(showAllSounds ? "chevron-up" : "chevron-down") me-1"></i>
+                                        @(showAllSounds ? "Ocultar" : "Mostrar") Todos
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            @if (showAllSounds)
+                            {
+                                <div class="card-body">
+                                    @if (isLoadingAllSounds)
+                                    {
+                                        <div class="text-center py-3">
+                                            <div class="spinner-border spinner-border-sm"></div>
+                                            <p class="small text-muted mt-2">Carregando sons...</p>
+                                        </div>
+                                    }
+                                    else if (allSounds.Count == 0)
+                                    {
+                                        <p class="text-muted mb-0">Nenhum som cadastrado no sistema.</p>
+                                    }
+                                    else
+                                    {
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-hover mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Nome</th>
+                                                        <th>Categoria</th>
+                                                        <th>Arquivo</th>
+                                                        <th>Duração</th>
+                                                        <th>Reproduções</th>
+                                                        <th>Ações</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var sound in allSounds)
+                                                    {
+                                                        <tr class="@(string.IsNullOrEmpty(sound.CategoryId) || !categories.Any(c => c.Id == sound.CategoryId) ? "table-warning" : "")">
+                                                            <td>
+                                                                @sound.DisplayName
+                                                                @if (sound.Favorite)
+                                                                {
+                                                                    <i class="fas fa-star text-warning ms-1"></i>
+                                                                }
+                                                            </td>
+                                                            <td>
+                                                                @if (string.IsNullOrEmpty(sound.CategoryId) || !categories.Any(c => c.Id == sound.CategoryId))
+                                                                {
+                                                                    <span class="badge bg-warning text-dark">
+                                                                        <i class="fas fa-exclamation-triangle me-1"></i>Sem categoria
+                                                                    </span>
+                                                                }
+                                                                else
+                                                                {
+                                                                    var cat = categories.FirstOrDefault(c => c.Id == sound.CategoryId);
+                                                                    if (cat != null)
+                                                                    {
+                                                                        <span class="badge" style="background-color: @cat.Color">
+                                                                            <i class="@cat.Icon me-1"></i>@cat.Name
+                                                                        </span>
+                                                                    }
+                                                                }
+                                                            </td>
+                                                            <td><small class="text-muted">@sound.FileName</small></td>
+                                                            <td>@sound.DurationFormatted</td>
+                                                            <td>@sound.PlayCount</td>
+                                                            <td>
+                                                                <div class="btn-group btn-group-sm">
+                                                                    <button class="btn btn-outline-primary"
+                                                                            @onclick="() => EditSound(sound.Id)"
+                                                                            title="Editar">
+                                                                        <i class="fas fa-edit"></i>
+                                                                    </button>
+                                                                    <button class="btn btn-outline-info"
+                                                                            @onclick="() => OpenQuickEditModal(sound)"
+                                                                            title="Edição rápida">
+                                                                        <i class="fas fa-bolt"></i>
+                                                                    </button>
+                                                                    <button class="btn btn-outline-danger"
+                                                                            @onclick="() => DeleteSound(sound.Id, sound.DisplayName)"
+                                                                            title="Excluir">
+                                                                        <i class="fas fa-trash"></i>
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        @if (categories.Count == 0)
+                        {
+                            <div class="text-center py-4">
+                                <i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+                                <p class="text-muted">Nenhuma categoria criada ainda. Crie sua primeira categoria ao lado.</p>
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var category in categories)
+                        {
+                            <div class="card mb-3">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h5 class="mb-0">
+                                            <i class="@category.Icon me-2" style="color: @category.Color"></i>
+                                            @category.Name
+                                        </h5>
+                                        <small class="text-muted">@category.SoundCount som(ns)</small>
+                                    </div>
+                                    <div class="btn-group">
+                                        <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleCategorySounds(category.Id)">
+                                            <i class="fas fa-@(expandedCategories.Contains(category.Id) ? "chevron-up" : "chevron-down") me-1"></i>
+                                            @(expandedCategories.Contains(category.Id) ? "Ocultar" : "Mostrar") Sons
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditCategory(category)">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCategory(category.Id)">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                @if (expandedCategories.Contains(category.Id))
                                 {
-                                    <tr>
-                                        <td>@category.Name</td>
-                                        <td>@category.SoundCount</td>
-                                        <td>
-                                            <button class="btn btn-sm btn-primary" @onclick="() => EditCategory(category)">Editar</button>
-                                            <button class="btn btn-sm btn-danger" @onclick="() => DeleteCategory(category.Id)">Excluir</button>
-                                        </td>
-                                    </tr>
+                                    <div class="card-body">
+                                        @if (isLoadingSounds)
+                                        {
+                                            <div class="text-center py-3">
+                                                <div class="spinner-border spinner-border-sm"></div>
+                                                <p class="small text-muted mt-2">Carregando sons...</p>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            var categorySounds = soundsByCategory.ContainsKey(category.Id) 
+                                                ? soundsByCategory[category.Id] 
+                                                : new List<Sound>();
+                                            
+                                            @if (categorySounds.Count == 0)
+                                            {
+                                                <p class="text-muted mb-0">Nenhum som nesta categoria.</p>
+                                            }
+                                            else
+                                            {
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm table-hover mb-0">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Nome</th>
+                                                                <th>Arquivo</th>
+                                                                <th>Duração</th>
+                                                                <th>Reproduções</th>
+                                                                <th>Ações</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach (var sound in categorySounds)
+                                                            {
+                                                                <tr>
+                                                                    <td>
+                                                                        @sound.DisplayName
+                                                                        @if (sound.Favorite)
+                                                                        {
+                                                                            <i class="fas fa-star text-warning ms-1"></i>
+                                                                        }
+                                                                    </td>
+                                                                    <td><small class="text-muted">@sound.FileName</small></td>
+                                                                    <td>@sound.DurationFormatted</td>
+                                                                    <td>@sound.PlayCount</td>
+                                                                    <td>
+                                                                        <div class="btn-group btn-group-sm">
+                                                                            <button class="btn btn-outline-primary"
+                                                                                    @onclick="() => EditSound(sound.Id)"
+                                                                                    title="Editar">
+                                                                                <i class="fas fa-edit"></i>
+                                                                            </button>
+                                                                            <button class="btn btn-outline-info"
+                                                                                    @onclick="() => OpenQuickEditModal(sound)"
+                                                                                    title="Edição rápida">
+                                                                                <i class="fas fa-bolt"></i>
+                                                                            </button>
+                                                                            <button class="btn btn-outline-danger"
+                                                                                    @onclick="() => DeleteSound(sound.Id, sound.DisplayName)"
+                                                                                    title="Excluir">
+                                                                                <i class="fas fa-trash"></i>
+                                                                            </button>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            }
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            }
+                                        }
+                                    </div>
                                 }
-                            </tbody>
-                        </table>
+                            </div>
+                        }
+                        }
                     }
                 </div>
             </div>
@@ -81,25 +330,270 @@
     </div>
 </div>
 
+<!-- Quick Edit Modal -->
+@if (showQuickEditModal && editingSound != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edição Rápida: @editingSound.DisplayName</h5>
+                    <button type="button" class="btn-close" @onclick="CloseQuickEditModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Nome</label>
+                        <input type="text" class="form-control" @bind="editingSound.Name" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descrição</label>
+                        <textarea class="form-control" rows="2" @bind="editingSound.Description"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Categoria</label>
+                        <select class="form-select" @bind="editingSound.CategoryId">
+                            @foreach (var cat in categories ?? new List<Category>())
+                            {
+                                <option value="@cat.Id">@cat.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="quickEditFavorite" @bind="editingSound.Favorite" />
+                        <label class="form-check-label" for="quickEditFavorite">Favorito</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseQuickEditModal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveQuickEdit">
+                        @if (isSavingQuickEdit)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Salvar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<Category>? categories;
     private Category newCategory = new();
     private bool isEditing = false;
+    private HashSet<string> expandedCategories = new();
+    private Dictionary<string, List<Sound>> soundsByCategory = new();
+    private bool isLoadingSounds = false;
+
+    private bool showQuickEditModal = false;
+    private Sound? editingSound;
+    private bool isSavingQuickEdit = false;
+
+    // Geral - Todos os sons
+    private bool showAllSounds = false;
+    private bool isLoadingAllSounds = false;
+    private List<Sound> allSounds = new();
+    private int allSoundsCount = 0;
+
+    // Salvar Tudo
+    private bool isSavingAll = false;
+    private string? saveAllMessage;
+    private bool saveAllSuccess = false;
+    private List<FileMoveService.FileMoveResult>? saveAllResults;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadCategories();
+        await LoadCategoriesFromFilesystem();
+        await LoadAllSoundsCount();
     }
 
-    private async Task LoadCategories()
+    private async Task LoadCategoriesFromFilesystem()
     {
         try
         {
-            categories = await SoundManager.GetAllCategoriesAsync();
+            Logger.LogInformation("Categories.LoadCategoriesFromFilesystem() - Loading categories directly from server");
+            categories = await FolderService.GetCategoriesFromFoldersAsync();
+            Logger.LogInformation("Categories.LoadCategoriesFromFilesystem() - Loaded {Count} categories from server", categories?.Count ?? 0);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Erro ao carregar categorias");
+            Logger.LogError(ex, "Erro ao carregar categorias do servidor: {Message}", ex.Message);
+        }
+    }
+
+    private async Task LoadAllSoundsCount()
+    {
+        try
+        {
+            var sounds = await SoundManager.GetAllSoundsAsync();
+            allSoundsCount = sounds.Count;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erro ao carregar contagem de sons");
+        }
+    }
+
+    private async Task ToggleAllSounds()
+    {
+        showAllSounds = !showAllSounds;
+        
+        if (showAllSounds && allSounds.Count == 0)
+        {
+            await LoadAllSounds();
+        }
+        
+        StateHasChanged();
+    }
+
+    private async Task LoadAllSounds()
+    {
+        try
+        {
+            isLoadingAllSounds = true;
+            StateHasChanged();
+
+            allSounds = await SoundManager.GetAllSoundsAsync();
+            allSoundsCount = allSounds.Count;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erro ao carregar todos os sons");
+        }
+        finally
+        {
+            isLoadingAllSounds = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleCategorySounds(string categoryId)
+    {
+        if (expandedCategories.Contains(categoryId))
+        {
+            expandedCategories.Remove(categoryId);
+        }
+        else
+        {
+            expandedCategories.Add(categoryId);
+            
+            if (!soundsByCategory.ContainsKey(categoryId))
+            {
+                await LoadSoundsForCategory(categoryId);
+            }
+        }
+        StateHasChanged();
+    }
+
+    private async Task LoadSoundsForCategory(string categoryId)
+    {
+        try
+        {
+            isLoadingSounds = true;
+            StateHasChanged();
+
+            var sounds = await SoundManager.GetSoundsByCategoryAsync(categoryId);
+            soundsByCategory[categoryId] = sounds;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erro ao carregar sons da categoria {0}", categoryId);
+        }
+        finally
+        {
+            isLoadingSounds = false;
+            StateHasChanged();
+        }
+    }
+
+    private void EditSound(string soundId)
+    {
+        NavigationManager.NavigateTo($"/edit/{soundId}");
+    }
+
+    private void OpenQuickEditModal(Sound sound)
+    {
+        editingSound = new Sound
+        {
+            Id = sound.Id,
+            Name = sound.Name,
+            Description = sound.Description,
+            CategoryId = sound.CategoryId,
+            Favorite = sound.Favorite,
+            Tags = new List<string>(sound.Tags),
+            FileName = sound.FileName,
+            FilePath = sound.FilePath,
+            FileSize = sound.FileSize,
+            Duration = sound.Duration,
+            Format = sound.Format,
+            CreatedAt = sound.CreatedAt,
+            LastPlayed = sound.LastPlayed,
+            PlayCount = sound.PlayCount
+        };
+        showQuickEditModal = true;
+        StateHasChanged();
+    }
+
+    private void CloseQuickEditModal()
+    {
+        showQuickEditModal = false;
+        editingSound = null;
+        StateHasChanged();
+    }
+
+    private async Task SaveQuickEdit()
+    {
+        if (editingSound == null) return;
+
+        try
+        {
+            isSavingQuickEdit = true;
+            StateHasChanged();
+
+            var success = await SoundManager.UpdateSoundAsync(editingSound);
+            
+            if (success)
+            {
+                // Update the sound in the local cache
+                foreach (var kvp in soundsByCategory)
+                {
+                    var sound = kvp.Value.FirstOrDefault(s => s.Id == editingSound.Id);
+                    if (sound != null)
+                    {
+                        sound.Name = editingSound.Name;
+                        sound.Description = editingSound.Description;
+                        sound.CategoryId = editingSound.CategoryId;
+                        sound.Favorite = editingSound.Favorite;
+                        break;
+                    }
+                }
+
+                // If category changed, reload affected categories
+                CloseQuickEditModal();
+                await LoadCategoriesFromFilesystem();
+                
+                // Reload expanded categories
+                foreach (var catId in expandedCategories.ToList())
+                {
+                    await LoadSoundsForCategory(catId);
+                }
+
+                // Reload all sounds if expanded
+                if (showAllSounds)
+                {
+                    await LoadAllSounds();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erro ao salvar edição rápida");
+        }
+        finally
+        {
+            isSavingQuickEdit = false;
+            StateHasChanged();
         }
     }
 
@@ -107,26 +601,57 @@
     {
         try
         {
+            Logger.LogInformation("Categories.HandleSubmit() - Starting category operation. IsEditing: {IsEditing}, Name: {Name}", isEditing, newCategory.Name);
+
             if (isEditing)
             {
-                await SoundManager.UpdateCategoryAsync(newCategory);
+                Logger.LogInformation("Categories.HandleSubmit() - Updating existing category - NOT IMPLEMENTED YET");
+                // TODO: Implement category update
             }
             else
             {
-                await SoundManager.AddCategoryAsync(newCategory.Name, newCategory.Description);
+                Logger.LogInformation("Categories.HandleSubmit() - Creating folder for category: {Name}", newCategory.Name);
+
+                // Generate category slug (URL-safe ID) for filesystem
+                var categorySlug = Category.GenerateSlug(newCategory.Name);
+                Logger.LogInformation("Categories.HandleSubmit() - Generated category slug: '{OriginalName}' -> '{Slug}'",
+                    newCategory.Name, categorySlug);
+
+                // Create folder on server directly
+                var folderCreated = await FolderService.CreateCategoryFolderAsync(categorySlug);
+                if (!folderCreated)
+                {
+                    Logger.LogError("Categories.HandleSubmit() - Failed to create category folder: {CategorySlug}", categorySlug);
+                    return;
+                }
+
+                Logger.LogInformation("Categories.HandleSubmit() - Category folder created successfully: {CategorySlug}", categorySlug);
             }
-            await LoadCategories();
+
+            // Reload everything from server
+            Logger.LogInformation("Categories.HandleSubmit() - Reloading categories from server");
+            await LoadCategoriesFromFilesystem();
             ResetForm();
+
+            Logger.LogInformation("Categories.HandleSubmit() - Category operation completed successfully");
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Erro ao salvar categoria");
+            Logger.LogError(ex, "Erro ao salvar categoria: {Message}", ex.Message);
         }
     }
 
     private void EditCategory(Category category)
     {
-        newCategory = category;
+        newCategory = new Category
+        {
+            Id = category.Id,
+            Name = category.Name,
+            Description = category.Description,
+            Color = category.Color,
+            Icon = category.Icon,
+            SoundCount = category.SoundCount
+        };
         isEditing = true;
     }
 
@@ -135,11 +660,42 @@
         try
         {
             await SoundManager.DeleteCategoryAsync(categoryId);
-            await LoadCategories();
+            expandedCategories.Remove(categoryId);
+            soundsByCategory.Remove(categoryId);
+            await LoadCategoriesFromFilesystem();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Erro ao excluir categoria");
+        }
+    }
+
+    private async Task DeleteSound(string soundId, string soundName)
+    {
+        try
+        {
+            var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"Tem certeza que deseja excluir a música '{soundName}'?");
+            if (!confirmed) return;
+
+            var success = await SoundManager.DeleteSoundAsync(soundId);
+            if (success)
+            {
+                // Remove from local collections
+                foreach (var kvp in soundsByCategory.ToList())
+                {
+                    kvp.Value.RemoveAll(s => s.Id == soundId);
+                }
+
+                allSounds.RemoveAll(s => s.Id == soundId);
+
+                // Reload categories and counts
+                await LoadCategoriesFromFilesystem();
+                await LoadAllSoundsCount();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erro ao excluir música");
         }
     }
     
@@ -147,6 +703,95 @@
     {
         newCategory = new();
         isEditing = false;
+        StateHasChanged();
+    }
+
+    private async Task SaveAllChanges()
+    {
+        if (isSavingAll) return;
+
+        try
+        {
+            isSavingAll = true;
+            saveAllMessage = null;
+            saveAllResults = null;
+            StateHasChanged();
+
+            // Coletar todos os sons que precisam ser movidos
+            var allSoundsToMove = new List<Sound>();
+
+            // Adicionar sons da seção "Todos os Sons" se estiver expandida
+            if (showAllSounds && allSounds.Any())
+            {
+                allSoundsToMove.AddRange(allSounds);
+            }
+
+            // Adicionar sons das categorias expandidas
+            foreach (var categoryId in expandedCategories)
+            {
+                if (soundsByCategory.TryGetValue(categoryId, out var categorySounds))
+                {
+                    allSoundsToMove.AddRange(categorySounds);
+                }
+            }
+
+            // Remover duplicatas (um som pode aparecer em múltiplas visualizações)
+            var uniqueSounds = allSoundsToMove
+                .GroupBy(s => s.Id)
+                .Select(g => g.First())
+                .ToList();
+
+            if (uniqueSounds.Count == 0)
+            {
+                saveAllSuccess = false;
+                saveAllMessage = "Nenhum som encontrado para salvar. Expanda algumas categorias primeiro.";
+                return;
+            }
+
+            Logger.LogInformation("Saving {Count} sounds to their categories", uniqueSounds.Count);
+
+            var result = await FileMoveService.MoveFilesToCategoriesAsync(uniqueSounds);
+
+            saveAllSuccess = result.Success;
+            saveAllMessage = result.Message;
+            saveAllResults = result.FileResults;
+
+            // Recarregar dados após operação bem-sucedida
+            if (result.Success)
+            {
+                await LoadCategoriesFromFilesystem();
+                await LoadAllSoundsCount();
+
+                // Recarregar sons das categorias expandidas
+                foreach (var categoryId in expandedCategories.ToList())
+                {
+                    await LoadSoundsForCategory(categoryId);
+                }
+
+                // Recarregar todos os sons se estiver expandido
+                if (showAllSounds)
+                {
+                    await LoadAllSounds();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during SaveAllChanges");
+            saveAllSuccess = false;
+            saveAllMessage = $"Erro inesperado: {ex.Message}";
+        }
+        finally
+        {
+            isSavingAll = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearSaveMessage()
+    {
+        saveAllMessage = null;
+        saveAllResults = null;
         StateHasChanged();
     }
 }

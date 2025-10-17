@@ -1,0 +1,46 @@
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Copy all project files
+COPY . .
+
+# Change to Server directory for building
+WORKDIR "/src/Server"
+
+# Restore dependencies from Server context
+RUN dotnet restore
+
+# Build the Server project from its own directory
+RUN dotnet build -c Release -o /app/build
+
+# Publish stage
+FROM build AS publish
+RUN dotnet publish Server.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+# Runtime stage
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+WORKDIR /app
+
+# Create non-root user for security
+RUN adduser --disabled-password --gecos '' appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Copy published app
+COPY --from=publish --chown=appuser:appuser /app/publish .
+
+# Copy media files from source
+COPY --from=build --chown=appuser:appuser /src/Server/media ./media
+
+# Set environment variables for production
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080
+ENV DOTNET_RUNNING_IN_CONTAINER=true
+ENV MEDIA_ROOT=/app/media
+
+# Expose port
+EXPOSE 8080
+
+
+# Set entrypoint
+ENTRYPOINT ["dotnet", "Server.dll"]

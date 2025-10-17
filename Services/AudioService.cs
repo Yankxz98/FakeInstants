@@ -69,7 +69,11 @@ public class AudioService
             }
 
             // Create new audio instance
-            var resolvedPath = ResolveMediaUrl(sound.FilePath);
+            var resolvedPath = $"/media/{sound.Id}";
+            if (_httpClient.BaseAddress != null)
+            {
+                resolvedPath = new Uri(_httpClient.BaseAddress, resolvedPath).ToString();
+            }
             var audioInstance = new AudioInstance(sound.Id, resolvedPath);
             _activeAudios[sound.Id] = audioInstance;
 
@@ -170,6 +174,7 @@ public class AudioService
     {
         try
         {
+            // For duration, we still need to resolve the URL from filePath since we don't have the Sound object
             var resolvedPath = ResolveMediaUrl(filePath);
             var duration = await _jsRuntime.InvokeAsync<double>("audioService.getAudioDuration", resolvedPath);
             return duration;
@@ -221,7 +226,11 @@ public class AudioService
 
     private string ResolveMediaUrl(string path)
     {
-        if (string.IsNullOrWhiteSpace(path)) return path;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
         // Normalize slashes
         path = path.Replace('\\', '/');
 
@@ -230,51 +239,38 @@ public class AudioService
         {
             return path;
         }
-        // If looks like a direct file path under media, try to extract id from the filename suffix: name-<32hex>.<ext>
-        // Examples to normalize to /media/<id>:
-        //   media/<categoryId>/name-<id>.mp3
-        //   /media/<categoryId>/name-<id>.mp3
-        //   <anything>/name-<id>.mp3
-        var toInspect = path;
-        if (toInspect.StartsWith("/media/", StringComparison.OrdinalIgnoreCase))
+
+        // Extract filename from path
+        var fileNameOnly = path;
+        if (fileNameOnly.Contains('/'))
         {
-            // Handle two-segment media path
-            var parts = toInspect.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 3) // media, categoryId, file
-            {
-                toInspect = parts[^1];
-            }
+            var lastSlashIndex = fileNameOnly.LastIndexOf('/');
+            fileNameOnly = fileNameOnly.Substring(lastSlashIndex + 1);
         }
 
-        var lastSlash = toInspect.LastIndexOf('/') + 1;
-        var fileNameOnly = lastSlash > 0 && lastSlash < toInspect.Length ? toInspect.Substring(lastSlash) : toInspect;
-        var dotIndex2 = fileNameOnly.LastIndexOf('.');
-        if (dotIndex2 > 0)
+        // Extract ID from filename: <id>.<name>.<ext> format
+        var dotIndex = fileNameOnly.IndexOf('.');
+        if (dotIndex > 0)
         {
-            var nameWithoutExt = fileNameOnly.Substring(0, dotIndex2);
-            var dashIndex = nameWithoutExt.LastIndexOf('-');
-            if (dashIndex > 0 && dashIndex + 1 < nameWithoutExt.Length)
+            var candidateId = fileNameOnly.Substring(0, dotIndex);
+
+            // Check if it's a numeric ID
+            if (int.TryParse(candidateId, out var id))
             {
-                var candidateId = nameWithoutExt.Substring(dashIndex + 1);
-                if (candidateId.Length == 32 && IsHex(candidateId))
+                var resolvedPath = "/media/" + id;
+
+                // Combine with HttpClient BaseAddress if available
+                if (_httpClient.BaseAddress != null)
                 {
-                    path = "/media/" + candidateId;
+                    var combined = new Uri(_httpClient.BaseAddress, resolvedPath);
+                    return combined.ToString();
                 }
+
+                return resolvedPath;
             }
         }
 
-        // Ensure leading slash for known media route
-        if (path.StartsWith("media/", StringComparison.OrdinalIgnoreCase))
-        {
-            path = "/" + path;
-        }
-
-        // If relative (e.g. "/media/{id}"), combine with HttpClient BaseAddress if available
-        if (_httpClient.BaseAddress != null)
-        {
-            var combined = new Uri(_httpClient.BaseAddress, path);
-            return combined.ToString();
-        }
+        _logger.LogWarning($"Could not extract numeric ID from filename {fileNameOnly}, returning original path");
         return path;
     }
 

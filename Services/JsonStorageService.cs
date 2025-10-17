@@ -1,21 +1,21 @@
-using System.IO.Compression;
 using System.Text.Json;
 using fakeinstants.Models;
-using Microsoft.JSInterop;
 
 namespace fakeinstants.Services;
 
 public class JsonStorageService
 {
     private readonly ILogger<JsonStorageService> _logger;
-    private readonly IJSRuntime _jsRuntime;
+    private readonly FolderBasedCategoryService _folderService;
     private const string SOUND_DATA_FILE = "data/sounds.json";
     private const string SETTINGS_FILE = "data/settings.json";
 
-    public JsonStorageService(ILogger<JsonStorageService> logger, IJSRuntime jsRuntime)
+    public JsonStorageService(
+        ILogger<JsonStorageService> logger,
+        FolderBasedCategoryService folderService)
     {
         _logger = logger;
-        _jsRuntime = jsRuntime;
+        _folderService = folderService;
     }
 
     // Sound Data Management
@@ -23,78 +23,30 @@ public class JsonStorageService
     {
         try
         {
-            _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Starting to load sound data...");
-            
-            // First try to load from physical file
-            var physicalFilePath = Path.Combine("wwwroot", SOUND_DATA_FILE);
-            SoundData? fileData = null;
-            
-            if (File.Exists(physicalFilePath))
-            {
-                _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Loading from physical file: {0}", physicalFilePath);
-                var fileJson = await File.ReadAllTextAsync(physicalFilePath);
-                if (!string.IsNullOrEmpty(fileJson))
-                {
-                    fileData = JsonSerializer.Deserialize<SoundData>(fileJson, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
-                }
-            }
+            _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Starting to load sound data from folder structure...");
 
-            // Then try localStorage as fallback/sync
-            _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Checking localStorage...");
-            var storedData = await _jsRuntime.InvokeAsync<string>("localStorage.getItem", "fakeinstants-sound-data");
-            SoundData? localStorageData = null;
+            // Load exclusively from folder structure (Server/media/)
+            var folderCategories = await _folderService.GetCategoriesFromFoldersAsync();
+            var folderSounds = await _folderService.GetSoundsFromFoldersAsync();
 
-            if (!string.IsNullOrEmpty(storedData))
+            var folderData = new SoundData
             {
-                // Decompress data from localStorage
-                var decompressedData = await DecodeAndDecompressAsync(storedData);
-                localStorageData = JsonSerializer.Deserialize<SoundData>(decompressedData, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-            }
+                Categories = folderCategories,
+                Sounds = folderSounds
+            };
 
-            // Use the data source with more sounds (localStorage is more up-to-date)
-            SoundData dataToUse;
-            if (localStorageData != null && fileData != null)
-            {
-                dataToUse = localStorageData.Sounds.Count >= fileData.Sounds.Count ? localStorageData : fileData;
-                _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Using {0} (localStorage: {1} sounds, file: {2} sounds)", 
-                    dataToUse == localStorageData ? "localStorage" : "file", 
-                    localStorageData.Sounds.Count, 
-                    fileData.Sounds.Count);
-            }
-            else if (localStorageData != null)
-            {
-                dataToUse = localStorageData;
-                _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Using localStorage data ({0} sounds)", localStorageData.Sounds.Count);
-            }
-            else if (fileData != null)
-            {
-                dataToUse = fileData;
-                _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Using file data ({0} sounds)", fileData.Sounds.Count);
-            }
-            else
-            {
-                _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - No data found, creating default");
-                dataToUse = CreateDefaultSoundData();
-            }
+            _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Loaded {0} sounds and {1} categories from folder structure",
+                folderSounds.Count, folderCategories.Count);
 
-            // Always sync both storage methods
-            await SaveSoundDataAsync(dataToUse);
-            
-            _logger.LogInformation("JsonStorageService.LoadSoundDataAsync() - Sound data loaded successfully with {0} sounds and {1} categories", dataToUse.Sounds.Count, dataToUse.Categories.Count);
-            return dataToUse;
+            return folderData;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "JsonStorageService.LoadSoundDataAsync() - Error loading sound data: {0}", ex.Message);
+            _logger.LogError(ex, "JsonStorageService.LoadSoundDataAsync() - Error loading sound data from folders: {0}", ex.Message);
             return CreateDefaultSoundData();
         }
     }
+
 
     public async Task SaveSoundDataAsync(SoundData data)
     {
@@ -105,22 +57,17 @@ public class JsonStorageService
                 WriteIndented = true
             });
 
-            // Save to both localStorage and physical file for consistency
-            // Compress data for localStorage to save space
-            var compressedJson = await CompressAndEncodeAsync(json);
-            await _jsRuntime.InvokeVoidAsync("localStorage.setItem", "fakeinstants-sound-data", compressedJson);
-            
-            // Also save to physical file
+            // Save to physical file only
             var physicalFilePath = Path.Combine("wwwroot", SOUND_DATA_FILE);
             var directory = Path.GetDirectoryName(physicalFilePath);
             if (directory != null && !Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
             }
-            
+
             await File.WriteAllTextAsync(physicalFilePath, json);
-            
-            _logger.LogInformation("Sound data saved successfully to both localStorage and file ({0} sounds, {1} categories)", 
+
+            _logger.LogInformation("Sound data saved to file ({0} sounds, {1} categories)",
                 data.Sounds.Count, data.Categories.Count);
         }
         catch (Exception ex)
@@ -184,55 +131,4 @@ public class JsonStorageService
         };
     }
 
-    // Compression helpers for localStorage
-    private async Task<string> CompressAndEncodeAsync(string data)
-    {
-        try
-        {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(data);
-            using var outputStream = new MemoryStream();
-            using (var gzipStream = new GZipStream(outputStream, CompressionMode.Compress))
-            {
-                await gzipStream.WriteAsync(bytes, 0, bytes.Length);
-            }
-            var compressedBytes = outputStream.ToArray();
-            return Convert.ToBase64String(compressedBytes);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to compress data, using uncompressed data");
-            return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(data));
-        }
-    }
-
-    private async Task<string> DecodeAndDecompressAsync(string compressedData)
-    {
-        try
-        {
-            var compressedBytes = Convert.FromBase64String(compressedData);
-            using var inputStream = new MemoryStream(compressedBytes);
-            using var outputStream = new MemoryStream();
-            using (var gzipStream = new GZipStream(inputStream, CompressionMode.Decompress))
-            {
-                await gzipStream.CopyToAsync(outputStream);
-            }
-            var decompressedBytes = outputStream.ToArray();
-            return System.Text.Encoding.UTF8.GetString(decompressedBytes);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to decompress data, trying as uncompressed base64");
-            try
-            {
-                // Fallback: try to decode as regular base64 (uncompressed data)
-                var bytes = Convert.FromBase64String(compressedData);
-                return System.Text.Encoding.UTF8.GetString(bytes);
-            }
-            catch
-            {
-                _logger.LogError(ex, "Failed to decode data as both compressed and uncompressed");
-                throw;
-            }
-        }
-    }
 }

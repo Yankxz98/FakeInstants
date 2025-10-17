@@ -10,12 +10,15 @@ builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
 // Register services
+// Configure HttpClient to use the same origin (works for both dev and production)
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 
 // Register our custom services
 builder.Services.AddScoped<AudioService>();
 builder.Services.AddScoped<SoundManager>();
-builder.Services.AddSingleton<JsonStorageService>();
+builder.Services.AddScoped<JsonStorageService>();
+builder.Services.AddScoped<FolderBasedCategoryService>();
+builder.Services.AddScoped<FileMoveService>();
 
 var host = builder.Build();
 

@@ -1,0 +1,126 @@
+@page "/media-migration"
+@inject HttpClient Http
+@inject ILogger<MediaMigration> Logger
+
+<PageTitle>Migração de Mídia - FakeInstants</PageTitle>
+
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header">
+            <h3>Migração de Estrutura de Pastas</h3>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>Sobre esta ferramenta:</strong>
+                <p class="mb-0 mt-2">
+                    Esta ferramenta reorganiza os arquivos de áudio que estão em pastas com nomes GUID
+                    para uma estrutura baseada em categorias legíveis.
+                </p>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    @errorMessage
+                </div>
+            }
+
+            @if (migrationLog != null && migrationLog.Count > 0)
+            {
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h5 class="mb-0">Resultado da Migração</h5>
+                    </div>
+                    <div class="card-body">
+                        <div style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.9em;">
+                            @foreach (var log in migrationLog)
+                            {
+                                <div class="@GetLogClass(log)">@log</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="d-grid gap-2">
+                <button class="btn btn-primary btn-lg" @onclick="StartMigration" disabled="@isMigrating">
+                    @if (isMigrating)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        <text>Migrando...</text>
+                    }
+                    else
+                    {
+                        <i class="fas fa-sync-alt me-2"></i>
+                        <text>Iniciar Migração</text>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isMigrating = false;
+    private List<string>? migrationLog;
+    private string? errorMessage;
+
+    private async Task StartMigration()
+    {
+        if (isMigrating) return;
+
+        try
+        {
+            isMigrating = true;
+            errorMessage = null;
+            migrationLog = null;
+            StateHasChanged();
+
+            var response = await Http.PostAsync("/media/migrate", null);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                errorMessage = $"Erro ao executar migração: {response.StatusCode}";
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<MigrationResult>();
+            if (result != null)
+            {
+                migrationLog = result.Log;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during migration");
+            errorMessage = $"Erro durante migração: {ex.Message}";
+        }
+        finally
+        {
+            isMigrating = false;
+            StateHasChanged();
+        }
+    }
+
+    private string GetLogClass(string log)
+    {
+        if (log.StartsWith("ERROR:"))
+            return "text-danger";
+        if (log.StartsWith("MIGRATED:"))
+            return "text-success";
+        if (log.StartsWith("CLEANED:"))
+            return "text-info";
+        if (log.StartsWith("SKIP:"))
+            return "text-warning";
+        return "text-muted";
+    }
+
+    private class MigrationResult
+    {
+        public string Message { get; set; } = string.Empty;
+        public List<string> Log { get; set; } = new();
+    }
+}
+

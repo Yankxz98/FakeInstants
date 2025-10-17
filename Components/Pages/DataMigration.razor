@@ -1,0 +1,135 @@
+@page "/data-migration"
+@using fakeinstants.Services
+@inject SoundManager SoundManager
+@inject NavigationManager NavigationManager
+@inject ILogger<DataMigration> Logger
+
+<PageTitle>Migração de Dados - FakeInstants</PageTitle>
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card">
+                <div class="card-header">
+                    <h3>
+                        <i class="fas fa-database me-2"></i>
+                        Migração de Dados: localStorage → Filesystem
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Sobre esta migração:</strong>
+                        <p class="mb-0 mt-2">
+                            Esta ferramenta migra dados existentes do localStorage do navegador para o sistema de arquivos do servidor.
+                            As categorias serão criadas como pastas e os sons serão movidos para suas respectivas categorias.
+                        </p>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            @errorMessage
+                        </div>
+                    }
+
+                    @if (migrationResult != null)
+                    {
+                        <div class="alert alert-@(migrationResult.Success ? "success" : "danger")">
+                            <i class="fas fa-@(migrationResult.Success ? "check-circle" : "exclamation-triangle") me-2"></i>
+                            @migrationResult.Message
+                        </div>
+                    }
+
+                    @if (migrationResult != null && migrationResult.Log.Count > 0)
+                    {
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-list me-2"></i>
+                                    Detalhes da Migração
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.9em;">
+                                    @foreach (var log in migrationResult.Log)
+                                    {
+                                        <div class="@GetLogClass(log)">@log</div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary btn-lg" @onclick="StartMigration" disabled="@isMigrating">
+                            @if (isMigrating)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                                <text>Migrando dados...</text>
+                            }
+                            else
+                            {
+                                <i class="fas fa-play me-2"></i>
+                                <text>Iniciar Migração</text>
+                            }
+                        </button>
+
+                        <button class="btn btn-outline-secondary" @onclick="GoToCategories">
+                            <i class="fas fa-arrow-left me-2"></i>
+                            Voltar para Categorias
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isMigrating = false;
+    private string? errorMessage;
+    private SoundManager.MigrationResult? migrationResult;
+
+    private async Task StartMigration()
+    {
+        if (isMigrating) return;
+
+        try
+        {
+            isMigrating = true;
+            errorMessage = null;
+            migrationResult = null;
+            StateHasChanged();
+
+            migrationResult = await SoundManager.MigrateLocalStorageToFilesystemAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during data migration");
+            errorMessage = $"Erro durante migração: {ex.Message}";
+        }
+        finally
+        {
+            isMigrating = false;
+            StateHasChanged();
+        }
+    }
+
+    private void GoToCategories()
+    {
+        NavigationManager.NavigateTo("/categories");
+    }
+
+    private string GetLogClass(string log)
+    {
+        if (log.StartsWith("ERRO"))
+            return "text-danger";
+        if (log.StartsWith("OK:") || log.Contains("Criada categoria:") || log.Contains("Movidos"))
+            return "text-success";
+        if (log.StartsWith("Criada categoria:"))
+            return "text-info";
+        return "text-muted";
+    }
+}

@@ -7,8 +7,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\fakeinstants.csproj" />
+    <Compile Remove="**/*.cs" />
+    <Compile Include="Server/**/*.cs" />
+    <None Remove="**/*" />
+    <None Include="Server/**/*" />
+    <Content Remove="**/*" />
+    <Content Include="Server/**/*" />
+    <EmbeddedResource Remove="**/*" />
+    <EmbeddedResource Include="Server/**/*" />
   </ItemGroup>
+
 </Project>
 
 

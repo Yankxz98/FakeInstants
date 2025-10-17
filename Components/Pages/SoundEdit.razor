@@ -1,0 +1,215 @@
+@page "/edit/{SoundId}"
+@using fakeinstants.Models
+@using fakeinstants.Services
+@inject SoundManager SoundManager
+@inject FolderBasedCategoryService FolderService
+@inject NavigationManager NavigationManager
+@inject ILogger<SoundEdit> Logger
+
+<PageTitle>Editar Som - FakeInstants</PageTitle>
+
+<div class="container mt-4">
+    @if (sound == null)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Carregando...</span>
+            </div>
+            <p class="mt-3">Carregando som...</p>
+        </div>
+    }
+    else
+    {
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h3 class="mb-0">Editar Som</h3>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="GoBack">
+                            <i class="fas fa-arrow-left me-1"></i>Voltar
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <EditForm Model="@sound" OnValidSubmit="HandleSubmit">
+                            <DataAnnotationsValidator />
+                            
+                            <div class="mb-3">
+                                <label for="soundName" class="form-label">Nome</label>
+                                <InputText id="soundName" class="form-control" @bind-Value="sound.Name" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="soundDescription" class="form-label">Descrição</label>
+                                <InputTextArea id="soundDescription" class="form-control" rows="3" @bind-Value="sound.Description" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="soundCategory" class="form-label">Categoria</label>
+                                <InputSelect id="soundCategory" class="form-select" @bind-Value="sound.CategoryId">
+                                    <option value="">Selecione uma categoria</option>
+                                    @foreach (var category in categories)
+                                    {
+                                        <option value="@category.Id">@category.Name</option>
+                                    }
+                                </InputSelect>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Tags (separadas por vírgula)</label>
+                                <input type="text" class="form-control" @bind="tagsInput" placeholder="meme, viral, engraçado" />
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <InputCheckbox id="soundFavorite" class="form-check-input" @bind-Value="sound.Favorite" />
+                                    <label class="form-check-label" for="soundFavorite">
+                                        Marcar como favorito
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="card bg-light mb-3">
+                                <div class="card-body">
+                                    <h6 class="card-title">Informações do Arquivo</h6>
+                                    <dl class="row mb-0">
+                                        <dt class="col-sm-4">Nome do arquivo:</dt>
+                                        <dd class="col-sm-8">@sound.FileName</dd>
+                                        
+                                        <dt class="col-sm-4">Formato:</dt>
+                                        <dd class="col-sm-8">@sound.Format.ToUpper()</dd>
+                                        
+                                        <dt class="col-sm-4">Tamanho:</dt>
+                                        <dd class="col-sm-8">@sound.FileSizeFormatted</dd>
+                                        
+                                        <dt class="col-sm-4">Duração:</dt>
+                                        <dd class="col-sm-8">@sound.DurationFormatted</dd>
+                                        
+                                        <dt class="col-sm-4">Reproduções:</dt>
+                                        <dd class="col-sm-8">@sound.PlayCount</dd>
+                                        
+                                        <dt class="col-sm-4">Criado em:</dt>
+                                        <dd class="col-sm-8">@sound.CreatedAt.ToString("dd/MM/yyyy HH:mm")</dd>
+                                    </dl>
+                                </div>
+                            </div>
+
+                            @if (!string.IsNullOrEmpty(errorMessage))
+                            {
+                                <div class="alert alert-danger">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>@errorMessage
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrEmpty(successMessage))
+                            {
+                                <div class="alert alert-success">
+                                    <i class="fas fa-check-circle me-2"></i>@successMessage
+                                </div>
+                            }
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary" disabled="@isSaving">
+                                    @if (isSaving)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-2"></span>
+                                    }
+                                    <i class="fas fa-save me-1"></i>Salvar Alterações
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" @onclick="GoBack">
+                                    Cancelar
+                                </button>
+                            </div>
+                        </EditForm>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string SoundId { get; set; } = string.Empty;
+
+    private Sound? sound;
+    private List<Category> categories = new();
+    private string tagsInput = string.Empty;
+    private bool isSaving = false;
+    private string? errorMessage;
+    private string? successMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await SoundManager.InitializeAsync();
+            categories = await FolderService.GetCategoriesFromFoldersAsync();
+            
+            var allSounds = await SoundManager.GetAllSoundsAsync();
+            sound = allSounds.FirstOrDefault(s => s.Id == SoundId);
+
+            if (sound == null)
+            {
+                errorMessage = "Som não encontrado";
+                Logger.LogWarning("Sound with ID {0} not found", SoundId);
+                return;
+            }
+
+            tagsInput = string.Join(", ", sound.Tags);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading sound for editing");
+            errorMessage = $"Erro ao carregar som: {ex.Message}";
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (sound == null) return;
+
+        try
+        {
+            isSaving = true;
+            errorMessage = null;
+            successMessage = null;
+            StateHasChanged();
+
+            // Parse tags from input
+            sound.Tags = tagsInput
+                .Split(',')
+                .Select(t => t.Trim())
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .ToList();
+
+            var success = await SoundManager.UpdateSoundAsync(sound);
+
+            if (success)
+            {
+                successMessage = "Som atualizado com sucesso!";
+                await Task.Delay(1500);
+                GoBack();
+            }
+            else
+            {
+                errorMessage = "Erro ao atualizar som";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating sound");
+            errorMessage = $"Erro ao salvar: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void GoBack()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+}
+

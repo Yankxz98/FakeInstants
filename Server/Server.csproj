@@ -5,6 +5,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="media\chavedocofre\**" />
+    <Compile Remove="media\uncategorized\**" />
+    <Content Remove="media\chavedocofre\**" />
+    <Content Remove="media\uncategorized\**" />
+    <EmbeddedResource Remove="media\chavedocofre\**" />
+    <EmbeddedResource Remove="media\uncategorized\**" />
+    <None Remove="media\chavedocofre\**" />
+    <None Remove="media\uncategorized\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\fakeinstants.csproj" />
