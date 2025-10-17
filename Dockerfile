@@ -29,10 +29,14 @@ USER appuser
 # Copy published app
 COPY --from=publish --chown=appuser:appuser /app/publish .
 
+# Copy media files from source
+COPY --from=build --chown=appuser:appuser /src/Server/media ./media
+
 # Set environment variables for production
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV DOTNET_RUNNING_IN_CONTAINER=true
+ENV MEDIA_ROOT=/app/media
 
 # Expose port
 EXPOSE 8080

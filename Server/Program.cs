@@ -186,14 +186,31 @@ app.MapGet("/media/scan", () =>
     // List all directories and files for debugging
     var allDirs = mediaDir.GetDirectories();
     var allFiles = mediaDir.GetFiles("*", SearchOption.AllDirectories);
+    var rootFiles = mediaDir.GetFiles("*", SearchOption.TopDirectoryOnly);
 
     app.Logger.LogInformation("Found {DirectoryCount} directories and {FileCount} total files",
         allDirs.Length, allFiles.Length);
+    app.Logger.LogInformation("Found {RootFileCount} files directly in media root",
+        rootFiles.Length);
+
+    foreach (var file in rootFiles)
+    {
+        app.Logger.LogInformation("Root file: {FileName} ({Size} bytes)",
+            file.Name, file.Length);
+    }
 
     foreach (var dir in allDirs)
     {
         app.Logger.LogInformation("Directory: {DirName} (Files: {FileCount})",
             dir.Name, dir.GetFiles().Length);
+
+        // List files in this directory
+        var dirFiles = dir.GetFiles("*", SearchOption.TopDirectoryOnly);
+        foreach (var file in dirFiles)
+        {
+            app.Logger.LogInformation("  File in {DirName}: {FileName} ({Size} bytes)",
+                dir.Name, file.Name, file.Length);
+        }
     }
 
     // Scan all subdirectories (categories)
@@ -468,10 +485,24 @@ app.MapGet("/media/categories", () =>
         return Results.Ok(new List<CategoryInfo>());
     }
 
+    // Debug: list all files and directories
+    var allDirs = mediaDir.GetDirectories();
+    var rootFiles = mediaDir.GetFiles("*", SearchOption.TopDirectoryOnly);
+
+    app.Logger.LogInformation("Categories - Found {DirCount} directories and {FileCount} root files",
+        allDirs.Length, rootFiles.Length);
+
+    foreach (var file in rootFiles)
+    {
+        app.Logger.LogInformation("Categories - Root file: {FileName} ({Size} bytes)",
+            file.Name, file.Length);
+    }
+
     var categories = new List<CategoryInfo>();
     var categoryDirs = mediaDir.GetDirectories();
 
-    app.Logger.LogInformation("Found {CategoryDirCount} directories to check for categories", categoryDirs.Length);
+    app.Logger.LogInformation("Categories - Found {CategoryDirCount} directories to check for categories",
+        categoryDirs.Length);
 
     foreach (var categoryDir in categoryDirs)
     {
