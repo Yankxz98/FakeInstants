@@ -2,24 +2,17 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy solution and Server project files
-COPY ["FakeInstants.Server.sln", "./"]
-COPY ["Server.csproj", "./"]
-COPY ["Server/", "./Server/"]
+# Copy all project files
+COPY . .
 
-# Copy the referenced Blazor project (needed for compilation)
-COPY ["fakeinstants.csproj", "./"]
-COPY ["Program.cs", "./"]
-COPY ["Components/", "./Components/"]
-COPY ["Models/", "./Models/"]
-COPY ["Services/", "./Services/"]
-COPY ["wwwroot/", "./wwwroot/"]
+# Change to Server directory for building
+WORKDIR "/src/Server"
 
-# Restore dependencies
-RUN dotnet restore Server.csproj
+# Restore dependencies from Server context
+RUN dotnet restore
 
-# Build the Server project
-RUN dotnet build Server.csproj -c Release -o /app/build
+# Build the Server project from its own directory
+RUN dotnet build -c Release -o /app/build
 
 # Publish stage
 FROM build AS publish
