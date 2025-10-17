@@ -2,16 +2,67 @@
 @using fakeinstants.Models
 @using fakeinstants.Services
 @inject SoundManager SoundManager
+@inject FileMoveService FileMoveService
+@inject FolderBasedCategoryService FolderService
 @inject NavigationManager NavigationManager
 @inject ILogger<Categories> Logger
+@inject IJSRuntime JSRuntime
 
 <PageTitle>FakeInstants - Categorias</PageTitle>
 
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <h2>Gerenciamento de Categorias</h2>
-            <p class="text-muted">Organize seus sons em categorias personalizadas.</p>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h2>Gerenciamento de Categorias</h2>
+                    <p class="text-muted">Organize seus sons em categorias personalizadas.</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success btn-lg" @onclick="SaveAllChanges" disabled="@isSavingAll">
+                        @if (isSavingAll)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                            <text>Salvando...</text>
+                        }
+                        else
+                        {
+                            <i class="fas fa-save me-2"></i>
+                            <text>Salvar Tudo</text>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(saveAllMessage))
+            {
+                <div class="alert alert-@(saveAllSuccess ? "success" : "danger") alert-dismissible fade show" role="alert">
+                    <i class="fas fa-@(saveAllSuccess ? "check-circle" : "exclamation-triangle") me-2"></i>
+                    @saveAllMessage
+                    <button type="button" class="btn-close" @onclick="ClearSaveMessage"></button>
+                </div>
+            }
+
+            @if (saveAllResults != null && saveAllResults.Any())
+            {
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="fas fa-list-check me-2"></i>
+                            Detalhes da Operação (@saveAllResults.Count(r => r.Success)/@saveAllResults.Count arquivos processados)
+                        </h6>
+                    </div>
+                    <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+                        @foreach (var result in saveAllResults)
+                        {
+                            <div class="d-flex align-items-center mb-1">
+                                <i class="fas fa-@(result.Success ? "check text-success" : "times text-danger") me-2" style="min-width: 16px;"></i>
+                                <small class="@(result.Success ? "text-success" : "text-danger")">@result.Message</small>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
         </div>
     </div>
 
@@ -108,15 +159,20 @@
                                                             <td>@sound.PlayCount</td>
                                                             <td>
                                                                 <div class="btn-group btn-group-sm">
-                                                                    <button class="btn btn-outline-primary" 
+                                                                    <button class="btn btn-outline-primary"
                                                                             @onclick="() => EditSound(sound.Id)"
                                                                             title="Editar">
                                                                         <i class="fas fa-edit"></i>
                                                                     </button>
-                                                                    <button class="btn btn-outline-info" 
+                                                                    <button class="btn btn-outline-info"
                                                                             @onclick="() => OpenQuickEditModal(sound)"
                                                                             title="Edição rápida">
                                                                         <i class="fas fa-bolt"></i>
+                                                                    </button>
+                                                                    <button class="btn btn-outline-danger"
+                                                                            @onclick="() => DeleteSound(sound.Id, sound.DisplayName)"
+                                                                            title="Excluir">
+                                                                        <i class="fas fa-trash"></i>
                                                                     </button>
                                                                 </div>
                                                             </td>
@@ -213,15 +269,20 @@
                                                                     <td>@sound.PlayCount</td>
                                                                     <td>
                                                                         <div class="btn-group btn-group-sm">
-                                                                            <button class="btn btn-outline-primary" 
+                                                                            <button class="btn btn-outline-primary"
                                                                                     @onclick="() => EditSound(sound.Id)"
                                                                                     title="Editar">
                                                                                 <i class="fas fa-edit"></i>
                                                                             </button>
-                                                                            <button class="btn btn-outline-info" 
+                                                                            <button class="btn btn-outline-info"
                                                                                     @onclick="() => OpenQuickEditModal(sound)"
                                                                                     title="Edição rápida">
                                                                                 <i class="fas fa-bolt"></i>
+                                                                            </button>
+                                                                            <button class="btn btn-outline-danger"
+                                                                                    @onclick="() => DeleteSound(sound.Id, sound.DisplayName)"
+                                                                                    title="Excluir">
+                                                                                <i class="fas fa-trash"></i>
                                                                             </button>
                                                                         </div>
                                                                     </td>
@@ -324,7 +385,7 @@
     private HashSet<string> expandedCategories = new();
     private Dictionary<string, List<Sound>> soundsByCategory = new();
     private bool isLoadingSounds = false;
-    
+
     private bool showQuickEditModal = false;
     private Sound? editingSound;
     private bool isSavingQuickEdit = false;
@@ -335,21 +396,29 @@
     private List<Sound> allSounds = new();
     private int allSoundsCount = 0;
 
+    // Salvar Tudo
+    private bool isSavingAll = false;
+    private string? saveAllMessage;
+    private bool saveAllSuccess = false;
+    private List<FileMoveService.FileMoveResult>? saveAllResults;
+
     protected override async Task OnInitializedAsync()
     {
-        await LoadCategories();
+        await LoadCategoriesFromFilesystem();
         await LoadAllSoundsCount();
     }
 
-    private async Task LoadCategories()
+    private async Task LoadCategoriesFromFilesystem()
     {
         try
         {
-            categories = await SoundManager.GetAllCategoriesAsync();
+            Logger.LogInformation("Categories.LoadCategoriesFromFilesystem() - Loading categories directly from server");
+            categories = await FolderService.GetCategoriesFromFoldersAsync();
+            Logger.LogInformation("Categories.LoadCategoriesFromFilesystem() - Loaded {Count} categories from server", categories?.Count ?? 0);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Erro ao carregar categorias");
+            Logger.LogError(ex, "Erro ao carregar categorias do servidor: {Message}", ex.Message);
         }
     }
 
@@ -502,7 +571,7 @@
 
                 // If category changed, reload affected categories
                 CloseQuickEditModal();
-                await LoadCategories();
+                await LoadCategoriesFromFilesystem();
                 
                 // Reload expanded categories
                 foreach (var catId in expandedCategories.ToList())
@@ -532,20 +601,43 @@
     {
         try
         {
+            Logger.LogInformation("Categories.HandleSubmit() - Starting category operation. IsEditing: {IsEditing}, Name: {Name}", isEditing, newCategory.Name);
+
             if (isEditing)
             {
-                await SoundManager.UpdateCategoryAsync(newCategory);
+                Logger.LogInformation("Categories.HandleSubmit() - Updating existing category - NOT IMPLEMENTED YET");
+                // TODO: Implement category update
             }
             else
             {
-                await SoundManager.AddCategoryAsync(newCategory.Name, newCategory.Description);
+                Logger.LogInformation("Categories.HandleSubmit() - Creating folder for category: {Name}", newCategory.Name);
+
+                // Generate category slug (URL-safe ID) for filesystem
+                var categorySlug = Category.GenerateSlug(newCategory.Name);
+                Logger.LogInformation("Categories.HandleSubmit() - Generated category slug: '{OriginalName}' -> '{Slug}'",
+                    newCategory.Name, categorySlug);
+
+                // Create folder on server directly
+                var folderCreated = await FolderService.CreateCategoryFolderAsync(categorySlug);
+                if (!folderCreated)
+                {
+                    Logger.LogError("Categories.HandleSubmit() - Failed to create category folder: {CategorySlug}", categorySlug);
+                    return;
+                }
+
+                Logger.LogInformation("Categories.HandleSubmit() - Category folder created successfully: {CategorySlug}", categorySlug);
             }
-            await LoadCategories();
+
+            // Reload everything from server
+            Logger.LogInformation("Categories.HandleSubmit() - Reloading categories from server");
+            await LoadCategoriesFromFilesystem();
             ResetForm();
+
+            Logger.LogInformation("Categories.HandleSubmit() - Category operation completed successfully");
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Erro ao salvar categoria");
+            Logger.LogError(ex, "Erro ao salvar categoria: {Message}", ex.Message);
         }
     }
 
@@ -570,11 +662,40 @@
             await SoundManager.DeleteCategoryAsync(categoryId);
             expandedCategories.Remove(categoryId);
             soundsByCategory.Remove(categoryId);
-            await LoadCategories();
+            await LoadCategoriesFromFilesystem();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Erro ao excluir categoria");
+        }
+    }
+
+    private async Task DeleteSound(string soundId, string soundName)
+    {
+        try
+        {
+            var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"Tem certeza que deseja excluir a música '{soundName}'?");
+            if (!confirmed) return;
+
+            var success = await SoundManager.DeleteSoundAsync(soundId);
+            if (success)
+            {
+                // Remove from local collections
+                foreach (var kvp in soundsByCategory.ToList())
+                {
+                    kvp.Value.RemoveAll(s => s.Id == soundId);
+                }
+
+                allSounds.RemoveAll(s => s.Id == soundId);
+
+                // Reload categories and counts
+                await LoadCategoriesFromFilesystem();
+                await LoadAllSoundsCount();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erro ao excluir música");
         }
     }
     
@@ -582,6 +703,95 @@
     {
         newCategory = new();
         isEditing = false;
+        StateHasChanged();
+    }
+
+    private async Task SaveAllChanges()
+    {
+        if (isSavingAll) return;
+
+        try
+        {
+            isSavingAll = true;
+            saveAllMessage = null;
+            saveAllResults = null;
+            StateHasChanged();
+
+            // Coletar todos os sons que precisam ser movidos
+            var allSoundsToMove = new List<Sound>();
+
+            // Adicionar sons da seção "Todos os Sons" se estiver expandida
+            if (showAllSounds && allSounds.Any())
+            {
+                allSoundsToMove.AddRange(allSounds);
+            }
+
+            // Adicionar sons das categorias expandidas
+            foreach (var categoryId in expandedCategories)
+            {
+                if (soundsByCategory.TryGetValue(categoryId, out var categorySounds))
+                {
+                    allSoundsToMove.AddRange(categorySounds);
+                }
+            }
+
+            // Remover duplicatas (um som pode aparecer em múltiplas visualizações)
+            var uniqueSounds = allSoundsToMove
+                .GroupBy(s => s.Id)
+                .Select(g => g.First())
+                .ToList();
+
+            if (uniqueSounds.Count == 0)
+            {
+                saveAllSuccess = false;
+                saveAllMessage = "Nenhum som encontrado para salvar. Expanda algumas categorias primeiro.";
+                return;
+            }
+
+            Logger.LogInformation("Saving {Count} sounds to their categories", uniqueSounds.Count);
+
+            var result = await FileMoveService.MoveFilesToCategoriesAsync(uniqueSounds);
+
+            saveAllSuccess = result.Success;
+            saveAllMessage = result.Message;
+            saveAllResults = result.FileResults;
+
+            // Recarregar dados após operação bem-sucedida
+            if (result.Success)
+            {
+                await LoadCategoriesFromFilesystem();
+                await LoadAllSoundsCount();
+
+                // Recarregar sons das categorias expandidas
+                foreach (var categoryId in expandedCategories.ToList())
+                {
+                    await LoadSoundsForCategory(categoryId);
+                }
+
+                // Recarregar todos os sons se estiver expandido
+                if (showAllSounds)
+                {
+                    await LoadAllSounds();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error during SaveAllChanges");
+            saveAllSuccess = false;
+            saveAllMessage = $"Erro inesperado: {ex.Message}";
+        }
+        finally
+        {
+            isSavingAll = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearSaveMessage()
+    {
+        saveAllMessage = null;
+        saveAllResults = null;
         StateHasChanged();
     }
 }

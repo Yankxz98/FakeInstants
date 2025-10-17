@@ -2,7 +2,19 @@ namespace fakeinstants.Models;
 
 public class Sound
 {
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    private static int _nextId = 1;
+
+    public Sound()
+    {
+        Id = GenerateNextId().ToString();
+    }
+
+    private static int GenerateNextId()
+    {
+        return _nextId++;
+    }
+
+    public string Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string CategoryId { get; set; } = string.Empty;

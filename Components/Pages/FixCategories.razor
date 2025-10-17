@@ -1,5 +1,6 @@
 @page "/fix-categories"
 @inject SoundManager SoundManager
+@inject FolderBasedCategoryService FolderService
 @inject ILogger<FixCategories> Logger
 
 <PageTitle>Corrigir IDs de Categorias - FakeInstants</PageTitle>
@@ -105,7 +106,7 @@
     private async Task LoadCategories()
     {
         await SoundManager.InitializeAsync();
-        categories = await SoundManager.GetAllCategoriesAsync();
+        categories = await FolderService.GetCategoriesFromFoldersAsync();
         
         categoriesWithGuids = categories
             .Where(c => Guid.TryParse(c.Id, out _))

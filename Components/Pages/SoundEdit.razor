@@ -2,6 +2,7 @@
 @using fakeinstants.Models
 @using fakeinstants.Services
 @inject SoundManager SoundManager
+@inject FolderBasedCategoryService FolderService
 @inject NavigationManager NavigationManager
 @inject ILogger<SoundEdit> Logger
 
@@ -142,7 +143,7 @@
         try
         {
             await SoundManager.InitializeAsync();
-            categories = await SoundManager.GetAllCategoriesAsync();
+            categories = await FolderService.GetCategoriesFromFoldersAsync();
             
             var allSounds = await SoundManager.GetAllSoundsAsync();
             sound = allSounds.FirstOrDefault(s => s.Id == SoundId);

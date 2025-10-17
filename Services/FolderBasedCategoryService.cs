@@ -21,45 +21,38 @@ public class FolderBasedCategoryService
     {
         try
         {
-            _logger.LogInformation("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Scanning media folders for categories...");
+            _logger.LogInformation("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Loading categories from server...");
 
-            // Call /media/scan to get all sounds from filesystem
-            var response = await _httpClient.GetAsync("/media/scan");
+            // Call /media/categories to get all categories directly from folders
+            var response = await _httpClient.GetAsync("/media/categories");
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Failed to scan media directory: {StatusCode}", response.StatusCode);
+                _logger.LogError("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Failed to load categories: {StatusCode}", response.StatusCode);
                 return new List<Category>();
             }
 
-            var scannedSounds = await response.Content.ReadFromJsonAsync<List<Sound>>();
-            if (scannedSounds == null || scannedSounds.Count == 0)
+            var categoryInfos = await response.Content.ReadFromJsonAsync<List<CategoryInfo>>();
+            if (categoryInfos == null)
             {
-                _logger.LogInformation("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - No sounds found in media directory");
+                _logger.LogInformation("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - No categories found");
                 return new List<Category>();
             }
-
-            // Extract unique categories from the folder structure
-            var categoryIds = scannedSounds
-                .Select(s => s.CategoryId)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
 
             var categories = new List<Category>();
-            foreach (var categoryId in categoryIds)
+            foreach (var categoryInfo in categoryInfos)
             {
                 // Create category with readable ID
                 var category = new Category
                 {
-                    Id = categoryId,
-                    Name = FormatCategoryName(categoryId),
-                    Description = $"Categoria {FormatCategoryName(categoryId)}",
-                    SoundCount = scannedSounds.Count(s => s.CategoryId == categoryId)
+                    Id = categoryInfo.Id,
+                    Name = categoryInfo.Name,
+                    Description = $"Categoria {categoryInfo.Name}",
+                    SoundCount = categoryInfo.SoundCount
                 };
 
                 // Try to apply default styling if it's a known category
                 var defaultCategory = SoundData.DefaultCategories.FirstOrDefault(c =>
-                    c.Id.Equals(categoryId, StringComparison.OrdinalIgnoreCase));
+                    c.Id.Equals(categoryInfo.Id, StringComparison.OrdinalIgnoreCase));
 
                 if (defaultCategory != null)
                 {
@@ -86,15 +79,90 @@ public class FolderBasedCategoryService
                 .ThenBy(c => c.Name) // Then alphabetical
                 .ToList();
 
-            _logger.LogInformation("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Found {Count} categories from folder structure",
+            _logger.LogInformation("FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Loaded {Count} categories from server",
                 sortedCategories.Count);
 
             return sortedCategories;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Error scanning folders: {Message}", ex.Message);
+            _logger.LogError(ex, "FolderBasedCategoryService.GetCategoriesFromFoldersAsync() - Error loading categories: {Message}", ex.Message);
             return new List<Category>();
+        }
+    }
+
+    /// <summary>
+    /// Creates a category folder on the server
+    /// </summary>
+    public async Task<bool> CreateCategoryFolderAsync(string categoryId)
+    {
+        try
+        {
+            _logger.LogInformation("FolderBasedCategoryService.CreateCategoryFolderAsync() - Creating category folder: {CategoryId}", categoryId);
+
+            var request = new CreateCategoryRequest { CategoryId = categoryId };
+            _logger.LogInformation("FolderBasedCategoryService.CreateCategoryFolderAsync() - Sending request to /media/create-category with CategoryId: {CategoryId}", categoryId);
+
+            var response = await _httpClient.PostAsJsonAsync("/media/create-category", request);
+            _logger.LogInformation("FolderBasedCategoryService.CreateCategoryFolderAsync() - Response status: {StatusCode}", response.StatusCode);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("FolderBasedCategoryService.CreateCategoryFolderAsync() - Failed to create category folder. Status: {StatusCode}, Content: {Content}", response.StatusCode, errorContent);
+                return false;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<CreateCategoryResponse>();
+            if (result == null)
+            {
+                _logger.LogError("FolderBasedCategoryService.CreateCategoryFolderAsync() - Invalid response from server - result is null");
+                return false;
+            }
+
+            _logger.LogInformation("FolderBasedCategoryService.CreateCategoryFolderAsync() - Category folder created successfully: {Message}", result.message);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "FolderBasedCategoryService.CreateCategoryFolderAsync() - Exception: {Message}, StackTrace: {StackTrace}", ex.Message, ex.StackTrace);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Deletes a category folder from the server
+    /// </summary>
+    public async Task<bool> DeleteCategoryFolderAsync(string categoryId)
+    {
+        try
+        {
+            _logger.LogInformation("FolderBasedCategoryService.DeleteCategoryFolderAsync() - Deleting category folder: {CategoryId}", categoryId);
+
+            var response = await _httpClient.DeleteAsync($"/media/categories/{Uri.EscapeDataString(categoryId)}");
+            _logger.LogInformation("FolderBasedCategoryService.DeleteCategoryFolderAsync() - Response status: {StatusCode}", response.StatusCode);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("FolderBasedCategoryService.DeleteCategoryFolderAsync() - Failed to delete category folder. Status: {StatusCode}, Content: {Content}", response.StatusCode, errorContent);
+                return false;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<DeleteCategoryResponse>();
+            if (result == null)
+            {
+                _logger.LogError("FolderBasedCategoryService.DeleteCategoryFolderAsync() - Invalid response from server - result is null");
+                return false;
+            }
+
+            _logger.LogInformation("FolderBasedCategoryService.DeleteCategoryFolderAsync() - Category folder deleted successfully: {Message}", result.message);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "FolderBasedCategoryService.DeleteCategoryFolderAsync() - Exception: {Message}, StackTrace: {StackTrace}", ex.Message, ex.StackTrace);
+            return false;
         }
     }
 
@@ -174,5 +242,29 @@ public class FolderBasedCategoryService
         }
 
         return string.Join(' ', words);
+    }
+
+    // DTOs for server communication
+    private class CreateCategoryRequest
+    {
+        public string CategoryId { get; set; } = string.Empty;
+    }
+
+    private class CreateCategoryResponse
+    {
+        public string message { get; set; } = string.Empty;
+        public string categoryId { get; set; } = string.Empty;
+    }
+
+    private class DeleteCategoryResponse
+    {
+        public string message { get; set; } = string.Empty;
+    }
+
+    private class CategoryInfo
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public int SoundCount { get; set; }
     }
 }

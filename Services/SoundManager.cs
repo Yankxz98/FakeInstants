@@ -182,7 +182,7 @@ public class SoundManager
         // Ensure the sound has a unique ID
         if (string.IsNullOrEmpty(sound.Id))
         {
-            sound.Id = Guid.NewGuid().ToString();
+            sound.Id = new Sound().Id;
         }
 
         // Set creation time if not set
@@ -266,18 +266,21 @@ public class SoundManager
         // Stop playing if active
         await _audioService.StopSoundAsync(soundId);
 
-        // Remove file
+        // Remove file via API
         try
         {
-            var physicalPath = Path.Combine("wwwroot", sound.FilePath);
-            if (File.Exists(physicalPath))
+            var response = await _httpClient.DeleteAsync($"/media/sounds/{soundId}");
+            if (!response.IsSuccessStatusCode)
             {
-                File.Delete(physicalPath);
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Failed to delete sound via API: {StatusCode} - {Content}", response.StatusCode, errorContent);
+                return false;
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting audio file: {0}", sound.FilePath);
+            _logger.LogError(ex, "Error deleting audio file via API: {Message}", ex.Message);
+            return false;
         }
 
         // Update category count
@@ -297,12 +300,18 @@ public class SoundManager
     // Category Management
     public async Task<Category?> AddCategoryAsync(string name, string description = "")
     {
-        if (_currentData == null) await InitializeAsync();
+        _logger.LogInformation("SoundManager.AddCategoryAsync() - Starting to add category: {Name}", name);
+
+        if (_currentData == null)
+        {
+            _logger.LogInformation("SoundManager.AddCategoryAsync() - _currentData is null, calling InitializeAsync()");
+            await InitializeAsync();
+        }
 
         // Check if category with same name already exists
         if (_currentData!.Categories.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
         {
-            _logger.LogWarning("Category with name '{0}' already exists", name);
+            _logger.LogWarning("SoundManager.AddCategoryAsync() - Category with name '{0}' already exists", name);
             return null;
         }
 
@@ -334,9 +343,28 @@ public class SoundManager
         }
 
         _currentData.Categories.Add(category);
+        _logger.LogInformation("SoundManager.AddCategoryAsync() - Category added to local data: {Name} (ID: {Id})", category.Name, category.Id);
 
         // Create the category folder on the server
-        await EnsureCategoryFolderExistsAsync(finalId);
+        _logger.LogInformation("SoundManager.AddCategoryAsync() - Calling CreateCategoryFolderAsync for ID: {CategoryId}", finalId);
+        try
+        {
+            var folderCreated = await _folderService.CreateCategoryFolderAsync(finalId);
+            if (!folderCreated)
+            {
+                _logger.LogWarning("SoundManager.AddCategoryAsync() - Failed to create category folder for {CategoryId}, but category was added to local data", finalId);
+                // Don't return null here - category was added to local data, just folder creation failed
+            }
+            else
+            {
+                _logger.LogInformation("SoundManager.AddCategoryAsync() - Category folder created successfully for {CategoryId}", finalId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SoundManager.AddCategoryAsync() - Exception while creating folder: {Message}", ex.Message);
+            // Don't return null here - category was added to local data, just folder creation failed
+        }
 
         await SaveDataAsync();
         _logger.LogInformation("Added category: {0} with ID: {1} and created folder", category.Name, category.Id);
@@ -368,62 +396,46 @@ public class SoundManager
 
     public async Task<bool> DeleteCategoryAsync(string categoryId)
     {
+        _logger.LogInformation("SoundManager.DeleteCategoryAsync() - Starting to delete category: {CategoryId}", categoryId);
+
         if (_currentData == null) await InitializeAsync();
 
         var category = _currentData!.Categories.FirstOrDefault(c => c.Id == categoryId);
         if (category == null)
         {
-            _logger.LogWarning("Category {0} not found", categoryId);
+            _logger.LogWarning("SoundManager.DeleteCategoryAsync() - Category {CategoryId} not found in local data", categoryId);
             return false;
         }
 
         // Check if category has sounds
         if (category.SoundCount > 0)
         {
-            _logger.LogWarning("Cannot delete category {0} - it contains {1} sounds", category.Name, category.SoundCount);
+            _logger.LogWarning("SoundManager.DeleteCategoryAsync() - Cannot delete category {CategoryName} - it contains {SoundCount} sounds", category.Name, category.SoundCount);
             return false;
         }
 
-        _currentData.Categories.Remove(category);
+        _logger.LogInformation("SoundManager.DeleteCategoryAsync() - Deleting category folder on server: {CategoryId}", categoryId);
 
-        // Note: We don't delete the folder here as it might be managed by the filesystem
-        // The folder will be cleaned up by the server's move-files endpoint when empty
+        // Delete the folder on the server first
+        var folderDeleted = await _folderService.DeleteCategoryFolderAsync(categoryId);
+        if (!folderDeleted)
+        {
+            _logger.LogError("SoundManager.DeleteCategoryAsync() - Failed to delete category folder: {CategoryId}", categoryId);
+            return false;
+        }
+
+        _logger.LogInformation("SoundManager.DeleteCategoryAsync() - Category folder deleted successfully: {CategoryId}", categoryId);
+
+        // Remove from local data
+        _currentData.Categories.Remove(category);
+        _logger.LogInformation("SoundManager.DeleteCategoryAsync() - Category removed from local data: {CategoryName}", category.Name);
 
         await SaveDataAsync();
 
-        _logger.LogInformation("Deleted category: {0}", category.Name);
+        _logger.LogInformation("SoundManager.DeleteCategoryAsync() - Category deleted successfully: {CategoryName}", category.Name);
         return true;
     }
 
-    /// <summary>
-    /// Ensures a category folder exists on the server (used when creating new categories)
-    /// </summary>
-    private async Task EnsureCategoryFolderExistsAsync(string categoryId)
-    {
-        try
-        {
-            // Create a dummy sound in the category to ensure the folder is created
-            // This will trigger the folder creation on the server
-            var dummySound = new Sound
-            {
-                Id = Guid.NewGuid().ToString("n"),
-                Name = ".category_placeholder",
-                CategoryId = categoryId,
-                FileName = ".category_placeholder.tmp",
-                FilePath = $"/media/{Guid.NewGuid().ToString("n")}"
-            };
-
-            // Try to create the sound via upload (this will create the folder)
-            // Actually, let's just call the scan endpoint which should create the folder structure
-            // For now, we'll rely on the folder being created when the first sound is uploaded to it
-
-            _logger.LogInformation("Category folder for {CategoryId} will be created when first sound is uploaded", categoryId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not ensure category folder exists for {CategoryId}", categoryId);
-        }
-    }
 
     /// <summary>
     /// Syncs the current data with the filesystem after operations
@@ -584,6 +596,39 @@ public class SoundManager
     {
         if (_currentData == null) await InitializeAsync();
         return _currentData!.Categories;
+    }
+
+    /// <summary>
+    /// Forces reload of categories from filesystem (ignores cache)
+    /// </summary>
+    public async Task<List<Category>> GetCategoriesFromFilesystemAsync()
+    {
+        // Reload data from filesystem
+        var folderCategories = await _folderService.GetCategoriesFromFoldersAsync();
+        var folderSounds = await _folderService.GetSoundsFromFoldersAsync();
+
+        var folderData = new SoundData
+        {
+            Categories = folderCategories,
+            Sounds = folderSounds
+        };
+
+        // Enrich with current metadata if available
+        if (_currentData != null)
+        {
+            await EnrichFolderDataWithJsonMetadata(folderData, _currentData);
+        }
+
+        // Update current data
+        _currentData = folderData;
+
+        // Save updated data
+        await SaveDataAsync();
+
+        _logger.LogInformation("SoundManager.GetCategoriesFromFilesystemAsync() - Synced {0} sounds and {1} categories from filesystem",
+            folderSounds.Count, folderCategories.Count);
+
+        return _currentData.Categories;
     }
 
     public async Task<List<Sound>> GetSoundsByCategoryAsync(string categoryId)

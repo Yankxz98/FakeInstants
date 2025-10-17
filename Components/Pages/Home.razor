@@ -2,6 +2,7 @@
 @using fakeinstants.Models
 @using fakeinstants.Services
 @inject SoundManager SoundManager
+@inject FolderBasedCategoryService FolderService
 @inject ILogger<Home> Logger
 @inject HttpClient Http
 
@@ -51,7 +52,7 @@
     {
         try
         {
-            categories = await SoundManager.GetAllCategoriesAsync();
+            categories = await FolderService.GetCategoriesFromFoldersAsync();
             // Auto-sync on initialization
             await SyncWithMedia();
         }
@@ -77,9 +78,9 @@
             StateHasChanged();
 
             await SoundManager.SyncWithMediaDirectoryAsync(Http);
-            
+
             // Reload categories in case new ones were created
-            categories = await SoundManager.GetAllCategoriesAsync();
+            categories = await FolderService.GetCategoriesFromFoldersAsync();
             
             // Reload sound list
             if (soundListComponent != null)

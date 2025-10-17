@@ -1,5 +1,6 @@
 @inject SoundManager SoundManager
 @inject AudioService AudioService
+@inject FolderBasedCategoryService FolderService
 @inject NavigationManager NavigationManager
 @inject HttpClient Http
 @using System.Net.Http.Headers
@@ -200,7 +201,7 @@
     protected override async Task OnInitializedAsync()
     {
         await SoundManager.InitializeAsync();
-        Categories = await SoundManager.GetAllCategoriesAsync();
+        Categories = await FolderService.GetCategoriesFromFoldersAsync();
         
         // Auto-select first category if available
         if (Categories.Count > 0 && string.IsNullOrEmpty(SelectedCategoryId))
