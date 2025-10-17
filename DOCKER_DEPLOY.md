@@ -77,6 +77,10 @@ O Dockerfile copia:
 
 O `Server.csproj` referencia o projeto Blazor mas exclui o `Program.cs` da raiz para evitar conflitos.
 
+### Configuração do projeto Blazor
+
+O projeto `fakeinstants.csproj` tem `<RuntimeIdentifier>browser-wasm</RuntimeIdentifier>` necessário para compilação correta no Docker.
+
 ## Health Check
 
 A imagem inclui um health check que verifica se a aplicação está respondendo corretamente. O Render usará isso para monitorar o status do serviço.
