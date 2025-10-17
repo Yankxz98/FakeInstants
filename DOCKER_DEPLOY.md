@@ -81,7 +81,7 @@ O `Server.csproj` referencia o projeto Blazor mas exclui o `Program.cs` da raiz 
 
 O projeto `fakeinstants.csproj` tem:
 - `<RuntimeIdentifier>browser-wasm</RuntimeIdentifier>` necessário para compilação correta no Docker
-- **Service Worker removido**: A configuração `<ServiceWorker>` foi removida para evitar erros de arquivo não encontrado durante o publish
+- **Service Worker completamente removido**: Tanto `<ServiceWorkerAssetsManifest>` quanto a configuração `<ServiceWorker>` foram removidas para evitar erros durante build/publish
 
 ## Health Check
 
