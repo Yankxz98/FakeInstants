@@ -10,8 +10,8 @@ builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
 // Register services
-// Configure HttpClient to point to the server (not the client host)
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri("http://localhost:8999") });
+// Configure HttpClient to use the same origin (works for both dev and production)
+builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 
 // Register our custom services
 builder.Services.AddScoped<AudioService>();
