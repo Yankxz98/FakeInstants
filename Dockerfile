@@ -40,3 +40,4 @@ EXPOSE 8080
 
 # Set entrypoint
 ENTRYPOINT ["dotnet", "Server.dll"]
+
